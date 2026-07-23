@@ -23,7 +23,7 @@ import EpisodeFilterSettings from '@/components/EpisodeFilterSettings';
 import ProxyImage from '@/components/ProxyImage';
 import { useLongPress } from '@/hooks/useLongPress';
 
-/** 选集按钮上显示的短标签（数字等） */
+/** 选集按钮上显示的短标签（数字等）；全名仍保留在 originalTitle 供长按查看 */
 function getEpisodeDisplayLabel(
   title: string | undefined,
   episodeNumber: number
@@ -31,19 +31,44 @@ function getEpisodeDisplayLabel(
   if (!title) {
     return String(episodeNumber);
   }
-  // 如果是 OVA 格式，直接返回完整标题
-  if (title.match(/^OVA\s+\d+/i)) {
-    return title;
+  // OVA 单独展示
+  const ovaMatch = title.match(/OVA\s*(\d+(?:\.\d+)?)/i);
+  if (ovaMatch) {
+    return `OVA ${ovaMatch[1]}`;
   }
-  // 如果匹配 S01E01 格式，只显示集数部分（去掉 SxxE）
+  // S01E05 / s01e05 → 5
   const sxxexxMatch = title.match(/[Ss]\d+[Ee](\d{1,4}(?:\.\d+)?)/);
   if (sxxexxMatch) {
     return sxxexxMatch[1];
   }
-  // 如果匹配"第X集"、"第X话"、"X集"、"X话"格式，提取中间的数字（支持小数）
-  const match = title.match(/(?:第)?(\d+(?:\.\d+)?)(?:集|话)/);
-  if (match) {
-    return match[1];
+  // 第12集 / 12话 → 12
+  const zhMatch = title.match(/(?:第)?(\d+(?:\.\d+)?)(?:集|话)/);
+  if (zhMatch) {
+    return zhMatch[1];
+  }
+  // [01] / (01) → 1（网盘常见）
+  const bracketMatch = title.match(/[[(【](\d+(?:\.\d+)?)[\])】]/);
+  if (bracketMatch) {
+    return bracketMatch[1];
+  }
+  // E01 / EP01 / ep.01 → 1
+  const epMatch = title.match(/(?:^|[^a-zA-Z])(?:EP|E|ep|e)[.\s_-]*(\d+(?:\.\d+)?)/);
+  if (epMatch) {
+    return epMatch[1];
+  }
+  // _01_ / -01- → 1
+  const sepMatch = title.match(/[_-](\d+(?:\.\d+)?)[_-]/);
+  if (sepMatch) {
+    return sepMatch[1];
+  }
+  // 纯数字开头：01.xxx / 01 xxx
+  const leadingNum = title.match(/^(\d+(?:\.\d+)?)[^\d.]/);
+  if (leadingNum) {
+    return leadingNum[1];
+  }
+  // 整串就是数字
+  if (/^\d+(?:\.\d+)?$/.test(title.trim())) {
+    return title.trim();
   }
   return title;
 }
@@ -61,24 +86,30 @@ interface EpisodeButtonProps {
   isWatched: boolean;
   originalTitle?: string;
   inactiveEpisodeClass: string;
+  /** 仅 netdisk 源启用长按/右键查看全名 */
+  enableOriginalNamePopup?: boolean;
   onSelect: (zeroBasedIndex: number) => void;
   onShowOriginalName: (title: string, rect: DOMRect) => void;
 }
 
-/** 单集按钮：点击选集；移动端长按 / 桌面右键显示原集名 popup */
+/** 单集按钮：点击选集；netdisk 时移动端长按 / 桌面右键显示原集名 popup */
 const EpisodeButton: React.FC<EpisodeButtonProps> = ({
   episodeNumber,
   isActive,
   isWatched,
   originalTitle,
   inactiveEpisodeClass,
+  enableOriginalNamePopup = false,
   onSelect,
   onShowOriginalName,
 }) => {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const displayLabel = getEpisodeDisplayLabel(originalTitle, episodeNumber);
   const canShowOriginalName =
-    !!originalTitle && originalTitle.trim() !== '' && originalTitle !== displayLabel;
+    enableOriginalNamePopup &&
+    !!originalTitle &&
+    originalTitle.trim() !== '' &&
+    originalTitle !== displayLabel;
 
   const showOriginalName = useCallback(() => {
     if (!canShowOriginalName || !buttonRef.current) return;
@@ -99,7 +130,8 @@ const EpisodeButton: React.FC<EpisodeButtonProps> = ({
     <button
       ref={buttonRef}
       type='button'
-      // 不用 disabled，否则当前集无法长按/右键查看原名
+      // netdisk 不用 disabled，否则当前集无法长按/右键查看原名
+      disabled={canShowOriginalName ? undefined : isActive || undefined}
       aria-disabled={isActive || undefined}
       aria-current={isActive ? 'true' : undefined}
       onClick={() => {
@@ -107,14 +139,19 @@ const EpisodeButton: React.FC<EpisodeButtonProps> = ({
           onSelect(episodeNumber - 1);
         }
       }}
-      onContextMenu={(e) => {
-        if (!canShowOriginalName) return;
-        e.preventDefault();
-        e.stopPropagation();
-        showOriginalName();
-      }}
-      {...longPressProps}
-      className={`relative h-10 min-w-10 px-3 py-2 flex items-center justify-center text-sm font-medium rounded-md transition-all duration-200 whitespace-nowrap font-mono border select-none
+      onContextMenu={
+        canShowOriginalName
+          ? (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              showOriginalName();
+            }
+          : undefined
+      }
+      {...(canShowOriginalName ? longPressProps : {})}
+      className={`relative h-10 min-w-10 px-3 py-2 flex items-center justify-center text-sm font-medium rounded-md transition-all duration-200 whitespace-nowrap font-mono border ${
+        canShowOriginalName ? 'select-none' : ''
+      }
         ${isActive
           ? 'bg-green-500 text-white border-green-400 shadow-lg shadow-green-500/25 dark:bg-green-600 cursor-default'
           : isWatched
@@ -122,11 +159,13 @@ const EpisodeButton: React.FC<EpisodeButtonProps> = ({
             : inactiveEpisodeClass
         }`.trim()}
       style={
-        {
-          WebkitUserSelect: 'none',
-          userSelect: 'none',
-          WebkitTouchCallout: 'none',
-        } as React.CSSProperties
+        canShowOriginalName
+          ? ({
+              WebkitUserSelect: 'none',
+              userSelect: 'none',
+              WebkitTouchCallout: 'none',
+            } as React.CSSProperties)
+          : undefined
       }
       title={isWatched && !isActive ? '已观看过' : undefined}
     >
@@ -1031,6 +1070,7 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                     isWatched={watchedEpisodes.has(episodeNumber)}
                     originalTitle={episodes_titles?.[episodeNumber - 1]}
                     inactiveEpisodeClass={inactiveEpisodeClass}
+                    enableOriginalNamePopup={isNetdiskSource(currentSource)}
                     onSelect={handleEpisodeClick}
                     onShowOriginalName={showEpisodeNamePopup}
                   />
