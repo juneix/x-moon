@@ -6,6 +6,7 @@ import { AlertCircle, Cloud, Heart, Keyboard, Loader2, Router, Sparkles, X } fro
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 
+import { isAnimeCategoryText } from '@/lib/anime-keyword-expr';
 import { getAuthInfoFromBrowserCookie } from '@/lib/auth';
 import {
   clearDanmakuCacheByTitle,
@@ -6580,6 +6581,10 @@ function PlayPageClient() {
         total_time: Math.floor(duration),
         save_time: Date.now(),
         search_title: searchTitle,
+        is_anime: isAnimeCategoryText(
+          detailRef.current?.type_name,
+          detailRef.current?.class
+        ),
       });
 
       lastSavedPlayTimeRef.current = playTime;

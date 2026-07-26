@@ -6,6 +6,7 @@ import {
   Heart,
   Info,
   Link,
+  ListPlus,
   PlayCircleIcon,
   Radio,
   Sparkles,
@@ -25,6 +26,8 @@ import React, {
   useState,
 } from 'react';
 
+import { isAnimeCategoryText } from '@/lib/anime-keyword-expr';
+import { getAuthInfoFromBrowserCookie } from '@/lib/auth';
 import {
   deleteFavorite,
   deletePlayRecord,
@@ -48,6 +51,7 @@ import {
 import { useLongPress } from '@/hooks/useLongPress';
 
 import AIChatPanel from '@/components/AIChatPanel';
+import AnimeSubscribeModal from '@/components/AnimeSubscribeModal';
 import DetailPanel from '@/components/DetailPanel';
 import { ImagePlaceholder } from '@/components/ImagePlaceholder';
 import ImageViewer from '@/components/ImageViewer';
@@ -80,6 +84,10 @@ export interface VideoCardProps {
   rate?: string;
   type?: string;
   isBangumi?: boolean;
+  /** 明确标记为动漫（豆瓣动漫页 / CMS 等） */
+  isAnime?: boolean;
+  /** CMS 分类名，用于启发式识别动漫 */
+  typeName?: string;
   isAggregate?: boolean;
   origin?: 'vod' | 'live';
   releaseDate?: string; // 上映日期，格式：YYYY-MM-DD
@@ -125,6 +133,8 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
       rate,
       type = '',
       isBangumi = false,
+      isAnime = false,
+      typeName,
       isAggregate = false,
       origin = 'vod',
       releaseDate,
@@ -141,6 +151,17 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
     ref
   ) {
     const router = useRouter();
+    const [showAnimeSubscribe, setShowAnimeSubscribe] = useState(false);
+    const [animeSubscribeToast, setAnimeSubscribeToast] = useState('');
+    const isAdminUser = useMemo(() => {
+      const auth = getAuthInfoFromBrowserCookie();
+      return auth?.role === 'admin' || auth?.role === 'owner';
+    }, []);
+    const resolvedIsAnime = useMemo(
+      () =>
+        Boolean(isBangumi || isAnime || isAnimeCategoryText(typeName)),
+      [isBangumi, isAnime, typeName]
+    );
     const actualTitle = title;
     const actualPoster = poster;
     const netdiskPosterPlaceholder = useMemo(() => {
@@ -870,6 +891,27 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
         });
       }
 
+      // 添加追番订阅（仅管理员 + 判定为动漫）
+      if (
+        isAdminUser &&
+        resolvedIsAnime &&
+        origin !== 'live' &&
+        actualTitle
+      ) {
+        actions.push({
+          id: 'anime-subscribe',
+          label: '添加追番订阅',
+          icon: <ListPlus size={20} />,
+          onClick: () => {
+            setShowMobileActions(false);
+            setTimeout(() => {
+              setShowAnimeSubscribe(true);
+            }, 250);
+          },
+          color: 'primary' as const,
+        });
+      }
+
       return actions;
     }, [
       config,
@@ -893,6 +935,8 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
       origin,
       tmdb_id,
       openTrailerPicker,
+      isAdminUser,
+      resolvedIsAnime,
     ]);
 
     return (
@@ -2068,6 +2112,25 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(
             source={source}
           />
         )}
+
+        {/* 添加追番订阅（管理员） */}
+        <AnimeSubscribeModal
+          isOpen={showAnimeSubscribe}
+          onClose={() => setShowAnimeSubscribe(false)}
+          initialTitle={actualTitle}
+          initialLastEpisode={
+            from === 'playrecord' && currentEpisode ? currentEpisode : 0
+          }
+          onSuccess={() => {
+            setAnimeSubscribeToast('已添加追番订阅');
+            window.setTimeout(() => setAnimeSubscribeToast(''), 2500);
+          }}
+        />
+        {animeSubscribeToast ? (
+          <div className='fixed bottom-24 left-1/2 z-[10001] -translate-x-1/2 rounded-full bg-green-600 px-4 py-2 text-sm text-white shadow-lg'>
+            {animeSubscribeToast}
+          </div>
+        ) : null}
 
         {/* 图片查看器 */}
         {showImageViewer && (
