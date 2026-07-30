@@ -741,14 +741,15 @@ function PlayPageClient() {
     );
   };
 
-  /** 私人影库类源：配合 moontvplus-extension 跨域媒体模块，供 Anime4K 等读帧 */
+  /** 私人影库/网盘类源：配合 moontvplus-extension 跨域媒体模块，供 Anime4K 等读帧 */
   const needsPrivateSourceCrossOrigin = (source?: string | null) => {
     if (!source) return false;
     return (
       source === 'openlist' ||
       source === 'xiaoya' ||
       source === 'emby' ||
-      source.startsWith('emby_')
+      source.startsWith('emby_') ||
+      isNetdiskSource(source)
     );
   };
 
@@ -3812,7 +3813,7 @@ function PlayPageClient() {
     (video as any).playsInline = true;
     (video as any).webkitPlaysInline = true;
 
-    // openlist/emby/xiaoya：CORS 模式加载，需配套「moontvplus 扩展」注入 ACAO 后 Anime4K 才能读帧
+    // openlist/emby/xiaoya/netdisk：CORS 模式加载，需配套「moontvplus 扩展」注入 ACAO 后 Anime4K 才能读帧
     applyVideoCrossOrigin(video, currentSourceRef.current);
   };
 
