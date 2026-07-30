@@ -1,7 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
-import { AlertCircle, Download, ExternalLink, Loader2 } from 'lucide-react';
+import {
+  Activity,
+  AlertCircle,
+  Download,
+  ExternalLink,
+  Loader2,
+} from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import CapsuleSwitch from '@/components/CapsuleSwitch';
@@ -15,6 +21,19 @@ interface AcgSearchItem {
   torrentUrl: string;
   description: string;
   images: string[];
+}
+
+type MagnetHealthLevel = 'good' | 'ok' | 'risk' | 'unknown';
+
+interface MagnetHealthView {
+  health: MagnetHealthLevel;
+  seeders: number;
+  leechers: number;
+  peers: number;
+  message: string;
+  infoHash?: string;
+  source?: 'scrape' | 'cache';
+  durationMs?: number;
 }
 
 interface AcgSearchResult {
@@ -78,6 +97,12 @@ export default function AcgSearch({
   const [customName, setCustomName] = useState('');
   const [downloadTool, setDownloadTool] = useState<DownloadTool>('aria2');
   const [toast, setToast] = useState<ToastProps | null>(null);
+  const [healthMap, setHealthMap] = useState<Record<string, MagnetHealthView>>(
+    {}
+  );
+  const [healthCheckingIds, setHealthCheckingIds] = useState<
+    Record<string, true>
+  >({});
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const isLoadingMoreRef = useRef(false);
   const didInitSourceRef = useRef(false);
@@ -155,6 +180,7 @@ export default function AcgSearch({
       } else {
         // 新搜索，重置数据
         setAllItems(data.items);
+        setHealthMap({});
         // 如果第一页有结果，假设可能还有更多
         setHasMore(
           source !== 'mikan' &&
@@ -246,6 +272,83 @@ export default function AcgSearch({
       observer.unobserve(element);
     };
   }, [loadMore]);
+
+  const healthBadgeClass = (level: MagnetHealthLevel) => {
+    switch (level) {
+      case 'good':
+        return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300';
+      case 'ok':
+        return 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200';
+      case 'risk':
+        return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300';
+      default:
+        return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300';
+    }
+  };
+
+  const healthLabel = (level: MagnetHealthLevel) => {
+    switch (level) {
+      case 'good':
+        return '健康';
+      case 'ok':
+        return '一般';
+      case 'risk':
+        return '风险';
+      default:
+        return '未知';
+    }
+  };
+
+  // 单条测活（全站并发由服务端限制为 10；前端可同时点多条）
+  const handleCheckHealth = async (item: AcgSearchItem) => {
+    if (!item.torrentUrl || healthCheckingIds[item.guid]) return;
+
+    setHealthCheckingIds((prev) => ({ ...prev, [item.guid]: true }));
+    try {
+      const response = await fetch('/api/acg/health', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url: item.torrentUrl,
+          // 已有结果时点「重新测活」跳过缓存
+          skipCache: Boolean(healthMap[item.guid]),
+        }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || '测活失败');
+      }
+
+      setHealthMap((prev) => ({
+        ...prev,
+        [item.guid]: {
+          health: data.health as MagnetHealthLevel,
+          seeders: data.seeders ?? 0,
+          leechers: data.leechers ?? 0,
+          peers: data.peers ?? 0,
+          message: data.message || '',
+          infoHash: data.infoHash,
+          source: data.source,
+          durationMs: data.durationMs,
+        },
+      }));
+    } catch (err: any) {
+      setToast({
+        message: err.message || '测活失败',
+        type: 'error',
+        onClose: () => setToast(null),
+      });
+    } finally {
+      setHealthCheckingIds((prev) => {
+        const next = { ...prev };
+        delete next[item.guid];
+        return next;
+      });
+    }
+  };
 
   // 打开命名弹窗
   const handleOpenDownloadDialog = (item: AcgSearchItem) => {
@@ -375,8 +478,35 @@ export default function AcgSearch({
                 </div>
               )}
 
+              {/* 测活结果 */}
+              {healthMap[item.guid] && (
+                <div className='mb-3 flex flex-wrap items-center gap-2 text-xs'>
+                  <span
+                    className={`inline-flex items-center rounded-full px-2 py-0.5 font-medium ${healthBadgeClass(
+                      healthMap[item.guid].health
+                    )}`}
+                  >
+                    {healthLabel(healthMap[item.guid].health)}
+                  </span>
+                  <span className='text-gray-600 dark:text-gray-300'>
+                    Seeder {healthMap[item.guid].seeders}
+                    {' · '}
+                    Leecher {healthMap[item.guid].leechers}
+                    {' · '}
+                    Peer {healthMap[item.guid].peers}
+                  </span>
+                  {typeof healthMap[item.guid].durationMs === 'number' && (
+                    <span className='text-gray-400 dark:text-gray-500'>
+                      {healthMap[item.guid].source === 'cache'
+                        ? '缓存'
+                        : `${healthMap[item.guid].durationMs}ms`}
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* 操作按钮 */}
-              <div className='flex items-center gap-2'>
+              <div className='flex flex-wrap items-center gap-2'>
                 <button
                   onClick={() => handleOpenDownloadDialog(item)}
                   disabled={downloadingId === item.guid}
@@ -392,6 +522,24 @@ export default function AcgSearch({
                     <>
                       <Download className='h-4 w-4' />
                       <span>存到私人影库</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => handleCheckHealth(item)}
+                  disabled={!item.torrentUrl || Boolean(healthCheckingIds[item.guid])}
+                  className='flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-sky-600 text-white text-sm hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors'
+                  title='Tracker 测活（全站并发上限可由 MAGNET_HEALTH_MAX_CONCURRENT 配置）'
+                >
+                  {healthCheckingIds[item.guid] ? (
+                    <>
+                      <Loader2 className='h-4 w-4 animate-spin' />
+                      <span>测活中...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Activity className='h-4 w-4' />
+                      <span>{healthMap[item.guid] ? '重新测活' : '测活'}</span>
                     </>
                   )}
                 </button>
