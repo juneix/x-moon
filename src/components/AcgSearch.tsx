@@ -54,6 +54,35 @@ interface AcgSearchProps {
 type AcgSearchSource = 'acgrip' | 'mikan' | 'dmhy' | 'nyaa';
 type DownloadTool = 'aria2' | 'Transmission' | 'qBittorrent';
 
+/** 把可能的 xml 对象/空值收成稳定字符串，避免 key 变成 [object Object] */
+function asItemText(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    if (typeof obj._ === 'string') return obj._.trim();
+    if (typeof obj.url === 'string') return obj.url.trim();
+    if (typeof (obj as any).$?.url === 'string') return String((obj as any).$.url).trim();
+  }
+  return '';
+}
+
+/** 单条列表行身份：业务字段 + index，避免 guid 冲突导致整表联动 */
+function getAcgItemId(item: AcgSearchItem, index?: number): string {
+  const torrentUrl = asItemText(item.torrentUrl);
+  const link = asItemText(item.link);
+  const guid = asItemText(item.guid);
+  const title = asItemText(item.title);
+  const pubDate = asItemText(item.pubDate);
+  const base =
+    torrentUrl ||
+    link ||
+    guid ||
+    (title || pubDate ? `${title}|${pubDate}` : 'acg-item');
+  if (typeof index === 'number') return `${base}#${index}`;
+  return base;
+}
+
 const downloadToolOptions: Array<{ value: DownloadTool; label: string }> = [
   { value: 'aria2', label: 'aria2' },
   { value: 'qBittorrent', label: 'qBittorrent' },
@@ -166,27 +195,83 @@ export default function AcgSearch({
       }
 
       const data: AcgSearchResult = await response.json();
+      // 规范化字段，避免 guid 为对象时整表共用同一个 key
+      const normalizedItems: AcgSearchItem[] = (data.items || []).map(
+        (item, index) => {
+          const title = asItemText(item.title);
+          const link = asItemText(item.link);
+          const torrentUrl = asItemText(item.torrentUrl);
+          const pubDate = asItemText(item.pubDate);
+          const description = asItemText(item.description);
+          const guid = getAcgItemId(
+            {
+              ...item,
+              title,
+              link,
+              torrentUrl,
+              pubDate,
+              guid: asItemText(item.guid),
+              description,
+              images: Array.isArray(item.images) ? item.images : [],
+            },
+            index
+          );
+          return {
+            title,
+            link,
+            guid,
+            pubDate,
+            torrentUrl,
+            description,
+            images: Array.isArray(item.images) ? item.images : [],
+          };
+        }
+      );
 
       if (isLoadMore) {
-        // 追加新数据
-        setAllItems((prev) => [...prev, ...data.items]);
+        // 追加新数据（续页 index 用当前长度偏移，保证 key 不撞）
+        setAllItems((prev) => {
+          const offset = prev.length;
+          const appended = (data.items || []).map((item, index) => {
+            const title = asItemText(item.title);
+            const link = asItemText(item.link);
+            const torrentUrl = asItemText(item.torrentUrl);
+            const pubDate = asItemText(item.pubDate);
+            const description = asItemText(item.description);
+            const baseItem: AcgSearchItem = {
+              title,
+              link,
+              torrentUrl,
+              pubDate,
+              description,
+              guid: asItemText(item.guid),
+              images: Array.isArray(item.images) ? item.images : [],
+            };
+            return {
+              ...baseItem,
+              guid: getAcgItemId(baseItem, offset + index),
+            };
+          });
+          return [...prev, ...appended];
+        });
         // 如果当前页没有结果，说明没有更多了
         setHasMore(
           source !== 'mikan' &&
             source !== 'dmhy' &&
             source !== 'nyaa' &&
-            data.items.length > 0
+            normalizedItems.length > 0
         );
       } else {
         // 新搜索，重置数据
-        setAllItems(data.items);
+        setAllItems(normalizedItems);
         setHealthMap({});
+        setHealthCheckingIds({});
         // 如果第一页有结果，假设可能还有更多
         setHasMore(
           source !== 'mikan' &&
             source !== 'dmhy' &&
             source !== 'nyaa' &&
-            data.items.length > 0
+            normalizedItems.length > 0
         );
       }
 
@@ -299,11 +384,12 @@ export default function AcgSearch({
     }
   };
 
-  // 单条测活（全站并发由服务端限制为 10；前端可同时点多条）
-  const handleCheckHealth = async (item: AcgSearchItem) => {
-    if (!item.torrentUrl || healthCheckingIds[item.guid]) return;
+  // 单条测活（全站并发由服务端限制；前端可同时点多条）
+  const handleCheckHealth = async (item: AcgSearchItem, index: number) => {
+    const itemId = getAcgItemId(item, index);
+    if (!item.torrentUrl || healthCheckingIds[itemId]) return;
 
-    setHealthCheckingIds((prev) => ({ ...prev, [item.guid]: true }));
+    setHealthCheckingIds((prev) => ({ ...prev, [itemId]: true }));
     try {
       const response = await fetch('/api/acg/health', {
         method: 'POST',
@@ -313,7 +399,7 @@ export default function AcgSearch({
         body: JSON.stringify({
           url: item.torrentUrl,
           // 已有结果时点「重新测活」跳过缓存
-          skipCache: Boolean(healthMap[item.guid]),
+          skipCache: Boolean(healthMap[itemId]),
         }),
       });
       const data = await response.json();
@@ -324,7 +410,7 @@ export default function AcgSearch({
 
       setHealthMap((prev) => ({
         ...prev,
-        [item.guid]: {
+        [itemId]: {
           health: data.health as MagnetHealthLevel,
           seeders: data.seeders ?? 0,
           leechers: data.leechers ?? 0,
@@ -344,15 +430,15 @@ export default function AcgSearch({
     } finally {
       setHealthCheckingIds((prev) => {
         const next = { ...prev };
-        delete next[item.guid];
+        delete next[itemId];
         return next;
       });
     }
   };
 
   // 打开命名弹窗
-  const handleOpenDownloadDialog = (item: AcgSearchItem) => {
-    setSelectedItem(item);
+  const handleOpenDownloadDialog = (item: AcgSearchItem, index: number) => {
+    setSelectedItem({ ...item, guid: getAcgItemId(item, index) });
     setCustomName(keyword.trim());
     setShowNameDialog(true);
   };
@@ -448,9 +534,13 @@ export default function AcgSearch({
       <>
         {/* 结果列表 */}
         <div className='space-y-3'>
-          {allItems.map((item) => (
+          {allItems.map((item, index) => {
+            const itemId = getAcgItemId(item, index);
+            const health = healthMap[itemId];
+            const isHealthChecking = Boolean(healthCheckingIds[itemId]);
+            return (
             <div
-              key={item.guid}
+              key={itemId}
               className='p-4 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-green-400 dark:hover:border-green-600 transition-colors'
             >
               {/* 标题 */}
@@ -460,7 +550,9 @@ export default function AcgSearch({
 
               {/* 发布时间 */}
               <div className='mb-2 text-xs text-gray-500 dark:text-gray-400'>
-                {new Date(item.pubDate).toLocaleString('zh-CN')}
+                {item.pubDate
+                  ? new Date(item.pubDate).toLocaleString('zh-CN')
+                  : ''}
               </div>
 
               {/* 图片预览 */}
@@ -479,27 +571,27 @@ export default function AcgSearch({
               )}
 
               {/* 测活结果 */}
-              {healthMap[item.guid] && (
+              {health && (
                 <div className='mb-3 flex flex-wrap items-center gap-2 text-xs'>
                   <span
                     className={`inline-flex items-center rounded-full px-2 py-0.5 font-medium ${healthBadgeClass(
-                      healthMap[item.guid].health
+                      health.health
                     )}`}
                   >
-                    {healthLabel(healthMap[item.guid].health)}
+                    {healthLabel(health.health)}
                   </span>
                   <span className='text-gray-600 dark:text-gray-300'>
-                    Seeder {healthMap[item.guid].seeders}
+                    Seeder {health.seeders}
                     {' · '}
-                    Leecher {healthMap[item.guid].leechers}
+                    Leecher {health.leechers}
                     {' · '}
-                    Peer {healthMap[item.guid].peers}
+                    Peer {health.peers}
                   </span>
-                  {typeof healthMap[item.guid].durationMs === 'number' && (
+                  {typeof health.durationMs === 'number' && (
                     <span className='text-gray-400 dark:text-gray-500'>
-                      {healthMap[item.guid].source === 'cache'
+                      {health.source === 'cache'
                         ? '缓存'
-                        : `${healthMap[item.guid].durationMs}ms`}
+                        : `${health.durationMs}ms`}
                     </span>
                   )}
                 </div>
@@ -508,12 +600,12 @@ export default function AcgSearch({
               {/* 操作按钮 */}
               <div className='flex flex-wrap items-center gap-2'>
                 <button
-                  onClick={() => handleOpenDownloadDialog(item)}
-                  disabled={downloadingId === item.guid}
+                  onClick={() => handleOpenDownloadDialog(item, index)}
+                  disabled={downloadingId === itemId}
                   className='flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-green-600 text-white text-sm hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors'
                   title='存到私人影库'
                 >
-                  {downloadingId === item.guid ? (
+                  {downloadingId === itemId ? (
                     <>
                       <Loader2 className='h-4 w-4 animate-spin' />
                       <span>下载中...</span>
@@ -526,12 +618,12 @@ export default function AcgSearch({
                   )}
                 </button>
                 <button
-                  onClick={() => handleCheckHealth(item)}
-                  disabled={!item.torrentUrl || Boolean(healthCheckingIds[item.guid])}
+                  onClick={() => handleCheckHealth(item, index)}
+                  disabled={!item.torrentUrl || isHealthChecking}
                   className='flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-sky-600 text-white text-sm hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors'
                   title='Tracker 测活（全站并发上限可由 MAGNET_HEALTH_MAX_CONCURRENT 配置）'
                 >
-                  {healthCheckingIds[item.guid] ? (
+                  {isHealthChecking ? (
                     <>
                       <Loader2 className='h-4 w-4 animate-spin' />
                       <span>测活中...</span>
@@ -539,12 +631,12 @@ export default function AcgSearch({
                   ) : (
                     <>
                       <Activity className='h-4 w-4' />
-                      <span>{healthMap[item.guid] ? '重新测活' : '测活'}</span>
+                      <span>{health ? '重新测活' : '测活'}</span>
                     </>
                   )}
                 </button>
                 <a
-                  href={item.link}
+                  href={item.link || item.torrentUrl || '#'}
                   target='_blank'
                   rel='noopener noreferrer'
                   className='flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-gray-200 text-gray-700 text-sm hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors'
@@ -555,7 +647,8 @@ export default function AcgSearch({
                 </a>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* 加载更多指示器 */}
