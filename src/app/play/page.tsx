@@ -165,6 +165,7 @@ const PLAY_SHORTCUT_GROUPS = [
     items: [
       { keys: ['空格'], description: '播放 / 暂停' },
       { keys: ['←', '→'], description: '快退 / 快进 10 秒' },
+      { keys: ['P'], description: '快捷快进' },
       { keys: ['↑', '↓'], description: '音量增加 / 减少' },
       { keys: ['F'], description: '切换全屏' },
     ],
@@ -376,6 +377,18 @@ function PlayPageClient() {
     skipConfig.intro_time,
     skipConfig.outro_time,
   ]);
+
+  // 快捷快进设置（默认 1 分 30 秒）
+  const DEFAULT_QUICK_FORWARD_SECONDS = 90;
+  const [quickForwardSeconds, setQuickForwardSeconds] = useState(() => {
+    if (typeof window === 'undefined') return DEFAULT_QUICK_FORWARD_SECONDS;
+    const saved = Number(localStorage.getItem('quickForwardSeconds'));
+    return Number.isFinite(saved) && saved > 0 ? saved : DEFAULT_QUICK_FORWARD_SECONDS;
+  });
+  const quickForwardSecondsRef = useRef(quickForwardSeconds);
+  useEffect(() => {
+    quickForwardSecondsRef.current = quickForwardSeconds;
+  }, [quickForwardSeconds]);
 
   // 跳过检查的时间间隔控制
   const lastSkipCheckRef = useRef(0);
@@ -1765,6 +1778,26 @@ function PlayPageClient() {
 
     artPlayerRef.current.playbackRate = 1;
     artPlayerRef.current.notice.show = '倍速：1x';
+    return true;
+  };
+
+  const formatQuickForwardDuration = (seconds: number) => {
+    if (seconds >= 60) {
+      const minutes = Math.floor(seconds / 60);
+      const remainingSeconds = seconds % 60;
+      return remainingSeconds ? `${minutes}分${remainingSeconds}秒` : `${minutes}分钟`;
+    }
+    return `${seconds}秒`;
+  };
+
+  const seekQuickForward = () => {
+    const player = artPlayerRef.current;
+    if (!player) return false;
+
+    const duration = Number.isFinite(player.duration) ? player.duration : Infinity;
+    const nextTime = Math.min(duration, (player.currentTime || 0) + quickForwardSecondsRef.current);
+    player.currentTime = nextTime;
+    player.notice.show = `快进 ${formatQuickForwardDuration(quickForwardSecondsRef.current)}`;
     return true;
   };
 
@@ -6315,6 +6348,13 @@ function PlayPageClient() {
       }
     }
 
+    // P = 使用当前配置快捷快进
+    if (!e.altKey && e.key.toLowerCase() === 'p') {
+      if (seekQuickForward()) {
+        e.preventDefault();
+      }
+    }
+
     // 左箭头 = 快退
     if (!e.altKey && e.key === 'ArrowLeft') {
       if (artPlayerRef.current && artPlayerRef.current.currentTime > 5) {
@@ -7395,6 +7435,86 @@ function PlayPageClient() {
               },
             },
             {
+              name: '快捷快进',
+              html: '快捷快进',
+              icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 5v14" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/><path d="m16 17 5-5-5-5" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 12H9" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/></svg>',
+              tooltip: `当前：${formatQuickForwardDuration(quickForwardSecondsRef.current)}，点击修改`,
+              onClick: async function () {
+                const player = artPlayerRef.current;
+                if (player?.fullscreen) {
+                  player.fullscreen = false;
+                  await new Promise(resolve => setTimeout(resolve, 300));
+                }
+
+                const existingDialog = document.querySelector('.quick-forward-settings-dialog');
+                existingDialog?.remove();
+
+                const container = document.createElement('div');
+                container.className = 'quick-forward-settings-dialog';
+                container.style.cssText = `
+                  position: fixed;
+                  inset: 0;
+                  z-index: 10000;
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  padding: 16px;
+                  background: rgba(0, 0, 0, 0.6);
+                  backdrop-filter: blur(3px);
+                `;
+                container.innerHTML = `
+                  <div role="dialog" aria-modal="true" style="width: min(360px, 100%); background: #1f2937; color: #fff; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; padding: 20px; box-shadow: 0 16px 48px rgba(0,0,0,.45);">
+                    <div style="font-size: 17px; font-weight: 600; margin-bottom: 8px;">快捷快进设置</div>
+                    <div style="color: #9ca3af; font-size: 13px; line-height: 1.5; margin-bottom: 16px;">设置点击底部按钮或按 P 键时向前跳转的时间。</div>
+                    <label for="quick-forward-input" style="display: block; color: #d1d5db; font-size: 13px; margin-bottom: 6px;">快进时长（秒）</label>
+                    <input id="quick-forward-input" type="number" min="1" step="1" value="${quickForwardSecondsRef.current}" style="box-sizing: border-box; width: 100%; height: 40px; padding: 0 10px; border: 1px solid #4b5563; border-radius: 6px; background: #111827; color: #fff; font-size: 14px; outline: none;" />
+                    <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px;">
+                      <button type="button" data-action="cancel" style="height: 36px; padding: 0 14px; border: 0; border-radius: 6px; background: #374151; color: #fff; cursor: pointer;">取消</button>
+                      <button type="button" data-action="confirm" style="height: 36px; padding: 0 14px; border: 0; border-radius: 6px; background: #0d9488; color: #fff; cursor: pointer;">保存</button>
+                    </div>
+                  </div>
+                `;
+                document.body.appendChild(container);
+
+                const input = container.querySelector('#quick-forward-input') as HTMLInputElement;
+                const cancelButton = container.querySelector('[data-action="cancel"]');
+                const confirmButton = container.querySelector('[data-action="confirm"]');
+                const cleanup = () => container.remove();
+                const save = () => {
+                  const nextSeconds = Number(input.value);
+                  if (!Number.isFinite(nextSeconds) || nextSeconds <= 0) {
+                    input.focus();
+                    if (artPlayerRef.current) {
+                      artPlayerRef.current.notice.show = '请输入大于 0 的有效秒数';
+                    }
+                    return;
+                  }
+
+                  const normalizedSeconds = Math.max(1, Math.round(nextSeconds));
+                  setQuickForwardSeconds(normalizedSeconds);
+                  quickForwardSecondsRef.current = normalizedSeconds;
+                  localStorage.setItem('quickForwardSeconds', String(normalizedSeconds));
+                  if (artPlayerRef.current) {
+                    artPlayerRef.current.notice.show = `快捷快进：${formatQuickForwardDuration(normalizedSeconds)}`;
+                  }
+                  cleanup();
+                };
+
+                cancelButton?.addEventListener('click', cleanup);
+                confirmButton?.addEventListener('click', save);
+                container.addEventListener('click', (event) => {
+                  if (event.target === container) cleanup();
+                });
+                input.addEventListener('keydown', (event) => {
+                  if (event.key === 'Enter') save();
+                  if (event.key === 'Escape') cleanup();
+                });
+                input.focus();
+                input.select();
+                return '打开设置';
+              },
+            },
+            {
               name: '跳过配置',
               html: '跳过配置',
               icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="5" cy="12" r="2" fill="#ffffff"/><path d="M9 12L15 12" stroke="#ffffff" stroke-width="2"/><circle cx="19" cy="12" r="2" fill="#ffffff"/></svg>',
@@ -7562,6 +7682,30 @@ function PlayPageClient() {
           ],
           // 控制栏配置
           controls: [
+            {
+              position: 'left',
+              index: 40,
+              html: `<i class="art-icon flex quick-forward-control"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 5v14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="m16 17 5-5-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 12H9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></i>`,
+              tooltip: '快捷快进',
+              mounted: ($el: HTMLElement) => {
+                $el.classList.add('quick-forward-control-wrapper');
+                if (!document.getElementById('quick-forward-control-style')) {
+                  const style = document.createElement('style');
+                  style.id = 'quick-forward-control-style';
+                  style.textContent = `
+                    @media (max-width: 767px) and (orientation: portrait) {
+                      .quick-forward-control-wrapper {
+                        display: none !important;
+                      }
+                    }
+                  `;
+                  document.head.appendChild(style);
+                }
+              },
+              click: function () {
+                seekQuickForward();
+              },
+            },
             {
               position: 'left',
               index: 13,
