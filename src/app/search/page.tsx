@@ -1917,7 +1917,7 @@ function SearchPageClient() {
                     ref={(el) => {
                       if (el) advancedDropdownRefs.current[0] = el;
                     }}
-                    className='absolute right-0 z-30 mt-2 w-56 rounded-xl border border-gray-200 bg-white p-3 shadow-lg dark:border-gray-700 dark:bg-gray-900'
+                    className='absolute right-0 z-[70] mt-2 w-56 rounded-xl border border-gray-200 bg-white p-3 shadow-lg dark:border-gray-700 dark:bg-gray-900'
                   >
                     <label className='flex cursor-pointer select-none items-center justify-between gap-3 rounded-lg px-1 py-2'>
                       <span className='text-sm text-gray-700 dark:text-gray-300'>
@@ -2121,7 +2121,7 @@ function SearchPageClient() {
                           ref={(el) => {
                             if (el) advancedDropdownRefs.current[1] = el;
                           }}
-                          className='absolute right-0 top-full z-30 mt-2 w-56 rounded-xl border border-gray-200 bg-white p-3 shadow-lg dark:border-gray-700 dark:bg-gray-900'
+                          className='absolute right-0 top-full z-[70] mt-2 w-56 rounded-xl border border-gray-200 bg-white p-3 shadow-lg dark:border-gray-700 dark:bg-gray-900'
                         >
                           <label className='flex cursor-pointer select-none items-center justify-between gap-3 rounded-lg px-1 py-2'>
                             <span className='text-sm text-gray-700 dark:text-gray-300'>
@@ -2157,38 +2157,41 @@ function SearchPageClient() {
                               <div className='absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform peer-checked:translate-x-4'></div>
                             </div>
                           </label>
+                          <div className='mt-2 border-t border-gray-200 pt-2 dark:border-gray-700'>
+                            <span className='px-1 text-sm text-gray-700 dark:text-gray-300'>
+                              显示方式
+                            </span>
+                            <div className='mt-2 grid grid-cols-2 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-800'>
+                              <button
+                                type='button'
+                                onClick={() => setResultDisplayMode('card')}
+                                className={`inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-sm transition-colors ${
+                                  resultDisplayMode === 'card'
+                                    ? 'bg-green-500 text-white'
+                                    : 'text-gray-600 hover:bg-white dark:text-gray-300 dark:hover:bg-gray-700'
+                                }`}
+                                aria-label='切换为卡片视图'
+                              >
+                                <Grid2x2 className='h-4 w-4' />
+                                <span>卡片</span>
+                              </button>
+                              <button
+                                type='button'
+                                onClick={() => setResultDisplayMode('list')}
+                                className={`inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-sm transition-colors ${
+                                  resultDisplayMode === 'list'
+                                    ? 'bg-green-500 text-white'
+                                    : 'text-gray-600 hover:bg-white dark:text-gray-300 dark:hover:bg-gray-700'
+                                }`}
+                                aria-label='切换为列表视图'
+                              >
+                                <List className='h-4 w-4' />
+                                <span>列表</span>
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       )}
-                    </div>
-                  </div>
-                  <div className='mb-8 flex justify-center'>
-                    <div className='inline-flex items-center rounded-xl border border-gray-200 bg-white p-1 shadow-sm dark:border-gray-700 dark:bg-gray-900'>
-                      <button
-                        type='button'
-                        onClick={() => setResultDisplayMode('card')}
-                        className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm transition-colors ${
-                          resultDisplayMode === 'card'
-                            ? 'bg-green-500 text-white'
-                            : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-                        }`}
-                        aria-label='切换为卡片视图'
-                      >
-                        <Grid2x2 className='h-4 w-4' />
-                        <span>卡片</span>
-                      </button>
-                      <button
-                        type='button'
-                        onClick={() => setResultDisplayMode('list')}
-                        className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm transition-colors ${
-                          resultDisplayMode === 'list'
-                            ? 'bg-green-500 text-white'
-                            : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-                        }`}
-                        aria-label='切换为列表视图'
-                      >
-                        <List className='h-4 w-4' />
-                        <span>列表</span>
-                      </button>
                     </div>
                   </div>
                   {searchResults.length === 0 ? (
