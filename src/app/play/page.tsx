@@ -9976,43 +9976,13 @@ function PlayPageClient() {
         </div>
         {/* 第二行：播放器和选集 */}
         <div className='space-y-2'>
-          <div className='flex items-center justify-end gap-2'>
-            {isHarmonyOS && isHlsPlaybackUrl(videoUrl) && (
-              <div
-                className='inline-flex items-center rounded-full border border-gray-200/60 bg-white/80 p-0.5 shadow-sm backdrop-blur-sm dark:border-gray-700/60 dark:bg-gray-800/80'
-                role='group'
-                aria-label='鸿蒙 HLS 播放器切换'
-              >
-                <span className='px-2 text-xs font-medium text-gray-500 dark:text-gray-400'>
-                  播放器
-                </span>
-                {([
-                  ['hlsjs', 'HLS.js'],
-                  ['native', '原生 HLS'],
-                ] as const).map(([mode, label]) => (
-                  <button
-                    key={mode}
-                    type='button'
-                    onClick={() => switchHarmonyHlsPlaybackMode(mode)}
-                    aria-pressed={harmonyHlsPlaybackMode === mode}
-                    className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
-                      harmonyHlsPlaybackMode === mode
-                        ? 'bg-green-500 text-white shadow-sm'
-                        : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* 折叠控制 - 仅在 lg 及以上屏幕显示 */}
+          {/* 折叠控制 - 仅在 lg 及以上屏幕显示 */}
+          <div className='hidden lg:flex justify-end'>
             <button
               onClick={() =>
                 setIsEpisodeSelectorCollapsed(!isEpisodeSelectorCollapsed)
               }
-              className='group relative hidden lg:flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-white/80 hover:bg-white dark:bg-gray-800/80 dark:hover:bg-gray-800 backdrop-blur-sm border border-gray-200/50 dark:border-gray-700/50 shadow-sm hover:shadow-md transition-all duration-200'
+              className='group relative flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-white/80 hover:bg-white dark:bg-gray-800/80 dark:hover:bg-gray-800 backdrop-blur-sm border border-gray-200/50 dark:border-gray-700/50 shadow-sm hover:shadow-md transition-all duration-200'
               title={
                 isEpisodeSelectorCollapsed ? '显示选集面板' : '隐藏选集面板'
               }
@@ -10598,6 +10568,54 @@ function PlayPageClient() {
                           {externalPlayerAdBlock ? '去广告' : '去广告'}
                         </span>
                       </button>
+
+                      {/* 鸿蒙 HLS.js 开关：关闭后使用原生 HLS，便于浏览器投屏 */}
+                      {isHarmonyOS && isHlsPlaybackUrl(videoUrl) && (
+                        <button
+                          type='button'
+                          onClick={() =>
+                            switchHarmonyHlsPlaybackMode(
+                              harmonyHlsPlaybackMode === 'hlsjs'
+                                ? 'native'
+                                : 'hlsjs'
+                            )
+                          }
+                          aria-pressed={harmonyHlsPlaybackMode === 'hlsjs'}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 shadow-sm hover:shadow-md cursor-pointer border flex-shrink-0 ${harmonyHlsPlaybackMode === 'hlsjs'
+                            ? 'bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white border-blue-400'
+                            : 'bg-white hover:bg-gray-100 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 border-gray-300 dark:border-gray-600'
+                            }`}
+                          title={
+                            harmonyHlsPlaybackMode === 'hlsjs'
+                              ? 'HLS.js 已开启，点击切换为原生 HLS'
+                              : 'HLS.js 已关闭，当前使用原生 HLS'
+                          }
+                        >
+                          <svg
+                            className='w-4 h-4 flex-shrink-0'
+                            fill='none'
+                            stroke='currentColor'
+                            viewBox='0 0 24 24'
+                          >
+                            {harmonyHlsPlaybackMode === 'hlsjs' ? (
+                              <path
+                                strokeLinecap='round'
+                                strokeLinejoin='round'
+                                strokeWidth='2'
+                                d='M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z'
+                              />
+                            ) : (
+                              <path
+                                strokeLinecap='round'
+                                strokeLinejoin='round'
+                                strokeWidth='2'
+                                d='M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636'
+                              />
+                            )}
+                          </svg>
+                          <span className='whitespace-nowrap'>HLS.js</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
