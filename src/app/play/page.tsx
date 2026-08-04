@@ -3833,12 +3833,19 @@ function PlayPageClient() {
       // 否则 Safari 可能切回原生 HLS，和 MSE/hls.js 抢同一个播放器。
       sources.forEach((s) => s.remove());
     } else {
-      const existed = sources.some((s) => s.src === url);
-      if (!existed) {
+      const existedSource = sources.find((s) => s.src === url);
+      if (existedSource) {
+        if (isHlsLikeSource) {
+          existedSource.type = 'application/vnd.apple.mpegurl';
+        }
+      } else {
         // 移除旧的 source，保持唯一
         sources.forEach((s) => s.remove());
         const sourceEl = document.createElement('source');
         sourceEl.src = url;
+        if (isHlsLikeSource) {
+          sourceEl.type = 'application/vnd.apple.mpegurl';
+        }
         video.appendChild(sourceEl);
       }
     }
@@ -7105,9 +7112,12 @@ function PlayPageClient() {
                 kickStartHlsPlayback();
               });
 
+              // 先暴露真实 m3u8 source，供浏览器的投屏/外部播放器在
+              // hls.js 将 video.currentSrc 切换为 blob: URL 前完成识别。
+              video.hls = hls;
+              ensureVideoSource(video, url);
               hls.loadSource(url);
               hls.attachMedia(video);
-              video.hls = hls;
 
               if (isWebkit) {
                 schedulePlayerTimeout(() => {
@@ -7125,8 +7135,6 @@ function PlayPageClient() {
                   }
                 }, 3000);
               }
-
-              ensureVideoSource(video, url);
 
               // 额外确保 iOS 内联播放属性（防止全屏时使用系统播放器）
               video.setAttribute('playsinline', 'true');
