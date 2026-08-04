@@ -414,7 +414,7 @@ function PlayPageClient() {
     blockAdEnabledRef.current = blockAdEnabled;
   }, [blockAdEnabled]);
 
-  // 外部播放器去广告开关（独立状态，默认 false）
+  // 工具栏去广告开关：用于外部播放器及鸿蒙原生 HLS，默认 false
   const [externalPlayerAdBlock, setExternalPlayerAdBlock] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       const v = localStorage.getItem('external_player_adblock');
@@ -1610,6 +1610,10 @@ function PlayPageClient() {
         return 'hlsjs';
       }
     });
+  const nativeHlsAdBlockEnabled =
+    isHarmonyOS &&
+    harmonyHlsPlaybackMode === 'native' &&
+    externalPlayerAdBlock;
 
   // 视频清晰度列表
   const [videoQualities, setVideoQualities] = useState<Array<{ name: string, url: string }>>([]);
@@ -2020,6 +2024,7 @@ function PlayPageClient() {
   const artRef = useRef<HTMLDivElement | null>(null);
   const activeHarmonyHlsPlaybackModeRef =
     useRef<HarmonyHlsPlaybackMode | null>(null);
+  const activeNativeHlsAdBlockRef = useRef<boolean | null>(null);
   const syncAnime4KCanvasFlip = (flip?: string) => {
     const canvas = anime4kRef.current?.canvas as HTMLCanvasElement | undefined;
     if (!canvas) return;
@@ -3903,9 +3908,7 @@ function PlayPageClient() {
     applyVideoCrossOrigin(video, currentSourceRef.current);
   };
 
-  const switchHarmonyHlsPlaybackMode = (mode: HarmonyHlsPlaybackMode) => {
-    if (mode === harmonyHlsPlaybackMode) return;
-
+  const prepareHarmonyHlsReinit = () => {
     const player = artPlayerRef.current;
     if (player) {
       const currentTime = Number(player.currentTime) || 0;
@@ -3913,17 +3916,82 @@ function PlayPageClient() {
       resumePlayingAfterHlsModeSwitchRef.current = !player.paused;
     }
 
-    try {
-      localStorage.setItem(HARMONY_HLS_PLAYBACK_MODE_KEY, mode);
-    } catch {
-      // 隐私模式等场景可能禁用 localStorage，但不应阻止本次切换。
-    }
     setVideoError(null);
     setCorsFailedUrl(null);
     setVideoLoadingStage('sourceChanging');
     setIsVideoLoading(true);
     setPlayerReady(false);
+  };
+
+  const buildNativeHlsPlaybackUrl = (url: string) => {
+    if (!url || typeof window === 'undefined') return url;
+
+    try {
+      const isAbsoluteUrl = /^https?:\/\//i.test(url);
+      const parsedUrl = new URL(url, window.location.origin);
+
+      // 已经走服务端去广告代理时，只切换过滤参数，避免重复嵌套代理。
+      if (parsedUrl.pathname === '/api/proxy-m3u8') {
+        if (nativeHlsAdBlockEnabled) {
+          parsedUrl.searchParams.delete('adblock');
+        } else {
+          parsedUrl.searchParams.set('adblock', 'false');
+        }
+        return isAbsoluteUrl
+          ? parsedUrl.toString()
+          : `${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`;
+      }
+
+      if (!nativeHlsAdBlockEnabled) return url;
+
+      let originalUrl = url;
+      let proxySegments = false;
+
+      // 保留视频源原有的全量代理能力，同时改由 proxy-m3u8 执行去广告。
+      if (parsedUrl.pathname === '/api/proxy/vod/m3u8') {
+        originalUrl = parsedUrl.searchParams.get('url') || '';
+        proxySegments = true;
+      } else if (parsedUrl.pathname === '/api/proxy/m3u8') {
+        originalUrl = parsedUrl.searchParams.get('url') || '';
+      }
+
+      if (!/^https?:\/\//i.test(originalUrl)) return url;
+
+      const params = new URLSearchParams({
+        url: originalUrl,
+        source: currentSourceRef.current,
+      });
+      if (proxyToken) params.set('token', proxyToken);
+      if (proxySegments) params.set('proxySegments', 'true');
+      return `/api/proxy-m3u8?${params.toString()}`;
+    } catch (error) {
+      console.warn('[Harmony HLS] 构建原生去广告地址失败:', error);
+      return url;
+    }
+  };
+
+  const switchHarmonyHlsPlaybackMode = (mode: HarmonyHlsPlaybackMode) => {
+    if (mode === harmonyHlsPlaybackMode) return;
+
+    prepareHarmonyHlsReinit();
+
+    try {
+      localStorage.setItem(HARMONY_HLS_PLAYBACK_MODE_KEY, mode);
+    } catch {
+      // 隐私模式等场景可能禁用 localStorage，但不应阻止本次切换。
+    }
     setHarmonyHlsPlaybackMode(mode);
+  };
+
+  const toggleToolbarAdBlock = () => {
+    if (
+      isHarmonyOS &&
+      harmonyHlsPlaybackMode === 'native' &&
+      isHlsPlaybackUrl(videoUrl)
+    ) {
+      prepareHarmonyHlsReinit();
+    }
+    setExternalPlayerAdBlock(!externalPlayerAdBlock);
   };
 
   // Wake Lock 相关函数
@@ -6809,7 +6877,9 @@ function PlayPageClient() {
 
     const needsHarmonyHlsModeReinit =
       isHarmonyOS &&
-      activeHarmonyHlsPlaybackModeRef.current !== harmonyHlsPlaybackMode;
+      (activeHarmonyHlsPlaybackModeRef.current !== harmonyHlsPlaybackMode ||
+        (harmonyHlsPlaybackMode === 'native' &&
+          activeNativeHlsAdBlockRef.current !== nativeHlsAdBlockEnabled));
 
     // 非WebKit浏览器且播放器已存在，使用switch方法切换
     if (!isWebkit && artPlayerRef.current && !needsHarmonyHlsModeReinit) {
@@ -6831,9 +6901,13 @@ function PlayPageClient() {
       artPlayerRef.current.title = `${videoTitle} - ${playerEpisodeLabel}`;
       artPlayerRef.current.poster = videoCover;
       if (artPlayerRef.current?.video) {
+        const exposedVideoUrl =
+          isHarmonyOS && harmonyHlsPlaybackMode === 'native'
+            ? buildNativeHlsPlaybackUrl(videoUrl)
+            : videoUrl;
         ensureVideoSource(
           artPlayerRef.current.video as HTMLVideoElement,
-          videoUrl
+          exposedVideoUrl
         );
       }
       return;
@@ -7083,8 +7157,9 @@ function PlayPageClient() {
 
                 // 不 attach MediaSource，直接把 m3u8 交给 ArkWeb/浏览器原生播放器。
                 // currentSrc 会保留实际播放地址，供浏览器内置投屏功能读取。
-                video.src = url;
-                ensureVideoSource(video, url);
+                const nativePlaybackUrl = buildNativeHlsPlaybackUrl(url);
+                video.src = nativePlaybackUrl;
+                ensureVideoSource(video, nativePlaybackUrl);
                 video.load();
                 return;
               }
@@ -9550,11 +9625,16 @@ function PlayPageClient() {
         activeHarmonyHlsPlaybackModeRef.current = isHarmonyOS
           ? harmonyHlsPlaybackMode
           : 'hlsjs';
+        activeNativeHlsAdBlockRef.current = nativeHlsAdBlockEnabled;
 
         if (artPlayerRef.current?.video) {
+          const exposedVideoUrl =
+            isHarmonyOS && harmonyHlsPlaybackMode === 'native'
+              ? buildNativeHlsPlaybackUrl(videoUrl)
+              : videoUrl;
           ensureVideoSource(
             artPlayerRef.current.video as HTMLVideoElement,
-            videoUrl
+            exposedVideoUrl
           );
         }
       } catch (err) {
@@ -9565,7 +9645,13 @@ function PlayPageClient() {
 
     // 调用异步初始化函数
     initPlayer();
-  }, [videoUrl, loading, blockAdEnabled, harmonyHlsPlaybackMode]);
+  }, [
+    videoUrl,
+    loading,
+    blockAdEnabled,
+    harmonyHlsPlaybackMode,
+    nativeHlsAdBlockEnabled,
+  ]);
 
   // 当组件卸载时清理定时器、Wake Lock 和播放器资源
   useEffect(() => {
@@ -10535,7 +10621,7 @@ function PlayPageClient() {
 
                       {/* 去广告开关 */}
                       <button
-                        onClick={() => setExternalPlayerAdBlock(!externalPlayerAdBlock)}
+                        onClick={toggleToolbarAdBlock}
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 shadow-sm hover:shadow-md cursor-pointer border flex-shrink-0 ${externalPlayerAdBlock
                           ? 'bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white border-blue-400'
                           : 'bg-white hover:bg-gray-100 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 border-gray-300 dark:border-gray-600'
