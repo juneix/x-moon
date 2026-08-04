@@ -126,6 +126,7 @@ interface SearchCachePayload {
 
 type CustomSubtitleEngine = 'native' | 'jassub';
 type PlaybackSourceBadge = 'local' | 'offline' | null;
+type HarmonyHlsPlaybackMode = 'hlsjs' | 'native';
 
 interface CustomSubtitleState {
   name: string;
@@ -155,10 +156,17 @@ interface JassubSubtitleInstance {
 }
 
 const PLAYBACK_RATE_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
+const HARMONY_HLS_PLAYBACK_MODE_KEY = 'harmony_hls_playback_mode';
 const JASSUB_ASSET_BASE = '/assets/jassub';
 const JASSUB_CJK_FONT_FAMILY = 'noto sans cjk sc';
 const JASSUB_CJK_FONT_URL = `${JASSUB_ASSET_BASE}/NotoSansCJK-Regular.ttc`;
 const ADVANCED_SUBTITLE_FORMATS = new Set(['ass', 'ssa']);
+
+const isHlsPlaybackUrl = (url: string) =>
+  /\.m3u8?(?:$|[/?#])/i.test(url) ||
+  url.includes('/api/proxy-m3u8') ||
+  url.includes('/api/proxy/vod/m3u8');
+
 const PLAY_SHORTCUT_GROUPS = [
   {
     title: '播放控制',
@@ -1580,6 +1588,29 @@ function PlayPageClient() {
   const [videoUrl, setVideoUrl] = useState('');
   const [playbackSourceBadge, setPlaybackSourceBadge] = useState<PlaybackSourceBadge>(null);
 
+  // 鸿蒙浏览器使用原生 HLS 时，video.currentSrc 会保留真实 m3u8，便于浏览器投屏。
+  const [isHarmonyOS] = useState(
+    () =>
+      typeof navigator !== 'undefined' &&
+      /OpenHarmony/i.test(navigator.userAgent)
+  );
+  const [harmonyHlsPlaybackMode, setHarmonyHlsPlaybackMode] =
+    useState<HarmonyHlsPlaybackMode>(() => {
+      if (
+        typeof navigator === 'undefined' ||
+        !/OpenHarmony/i.test(navigator.userAgent)
+      ) {
+        return 'hlsjs';
+      }
+
+      try {
+        const savedMode = localStorage.getItem(HARMONY_HLS_PLAYBACK_MODE_KEY);
+        return savedMode === 'native' ? 'native' : 'hlsjs';
+      } catch {
+        return 'hlsjs';
+      }
+    });
+
   // 视频清晰度列表
   const [videoQualities, setVideoQualities] = useState<Array<{ name: string, url: string }>>([]);
 
@@ -1816,6 +1847,8 @@ function PlayPageClient() {
 
   // 用于记录是否需要在播放器 ready 后跳转到指定进度
   const resumeTimeRef = useRef<number | null>(null);
+  // 切换鸿蒙 HLS 内核时，同时恢复切换前的播放/暂停状态。
+  const resumePlayingAfterHlsModeSwitchRef = useRef<boolean | null>(null);
   // 播放记录跳转按钮状态
   const playRecordJumpDismissedRef = useRef(false); // 记录用户是否已经关闭过跳转按钮
   const playRecordJumpLayerRef = useRef<any>(null); // 保存跳转按钮层的引用
@@ -1985,6 +2018,8 @@ function PlayPageClient() {
 
   const artPlayerRef = useRef<any>(null);
   const artRef = useRef<HTMLDivElement | null>(null);
+  const activeHarmonyHlsPlaybackModeRef =
+    useRef<HarmonyHlsPlaybackMode | null>(null);
   const syncAnime4KCanvasFlip = (flip?: string) => {
     const canvas = anime4kRef.current?.canvas as HTMLCanvasElement | undefined;
     if (!canvas) return;
@@ -3866,6 +3901,29 @@ function PlayPageClient() {
 
     // openlist/emby/xiaoya/netdisk：CORS 模式加载，需配套「moontvplus 扩展」注入 ACAO 后 Anime4K 才能读帧
     applyVideoCrossOrigin(video, currentSourceRef.current);
+  };
+
+  const switchHarmonyHlsPlaybackMode = (mode: HarmonyHlsPlaybackMode) => {
+    if (mode === harmonyHlsPlaybackMode) return;
+
+    const player = artPlayerRef.current;
+    if (player) {
+      const currentTime = Number(player.currentTime) || 0;
+      resumeTimeRef.current = currentTime > 0 ? currentTime : null;
+      resumePlayingAfterHlsModeSwitchRef.current = !player.paused;
+    }
+
+    try {
+      localStorage.setItem(HARMONY_HLS_PLAYBACK_MODE_KEY, mode);
+    } catch {
+      // 隐私模式等场景可能禁用 localStorage，但不应阻止本次切换。
+    }
+    setVideoError(null);
+    setCorsFailedUrl(null);
+    setVideoLoadingStage('sourceChanging');
+    setIsVideoLoading(true);
+    setPlayerReady(false);
+    setHarmonyHlsPlaybackMode(mode);
   };
 
   // Wake Lock 相关函数
@@ -6749,8 +6807,12 @@ function PlayPageClient() {
       return undefined;
     };
 
+    const needsHarmonyHlsModeReinit =
+      isHarmonyOS &&
+      activeHarmonyHlsPlaybackModeRef.current !== harmonyHlsPlaybackMode;
+
     // 非WebKit浏览器且播放器已存在，使用switch方法切换
-    if (!isWebkit && artPlayerRef.current) {
+    if (!isWebkit && artPlayerRef.current && !needsHarmonyHlsModeReinit) {
       // 显式设置类型，确保代理 URL 能被 HLS.js 正确处理
       const videoType = getVideoType(videoUrl);
       if (videoType) {
@@ -7013,6 +7075,20 @@ function PlayPageClient() {
           // HLS 支持配置
           customType: {
             m3u8: function (video: HTMLVideoElement, url: string) {
+              if (isHarmonyOS && harmonyHlsPlaybackMode === 'native') {
+                if (video.hls) {
+                  video.hls.destroy();
+                  delete video.hls;
+                }
+
+                // 不 attach MediaSource，直接把 m3u8 交给 ArkWeb/浏览器原生播放器。
+                // currentSrc 会保留实际播放地址，供浏览器内置投屏功能读取。
+                video.src = url;
+                ensureVideoSource(video, url);
+                video.load();
+                return;
+              }
+
               if (!Hls) {
                 console.error('HLS.js 未加载');
                 return;
@@ -8984,6 +9060,17 @@ function PlayPageClient() {
           }
           resumeTimeRef.current = null;
 
+          const shouldResumePlaying =
+            resumePlayingAfterHlsModeSwitchRef.current;
+          resumePlayingAfterHlsModeSwitchRef.current = null;
+          if (shouldResumePlaying === false) {
+            artPlayerRef.current.pause();
+          } else if (shouldResumePlaying === true) {
+            Promise.resolve(artPlayerRef.current.play()).catch((error) => {
+              console.warn('[Harmony HLS] 恢复播放失败:', error);
+            });
+          }
+
           schedulePlayerTimeout(() => {
             if (!artPlayerRef.current) {
               return;
@@ -9460,6 +9547,10 @@ function PlayPageClient() {
           }
         });
 
+        activeHarmonyHlsPlaybackModeRef.current = isHarmonyOS
+          ? harmonyHlsPlaybackMode
+          : 'hlsjs';
+
         if (artPlayerRef.current?.video) {
           ensureVideoSource(
             artPlayerRef.current.video as HTMLVideoElement,
@@ -9474,7 +9565,7 @@ function PlayPageClient() {
 
     // 调用异步初始化函数
     initPlayer();
-  }, [videoUrl, loading, blockAdEnabled]);
+  }, [videoUrl, loading, blockAdEnabled, harmonyHlsPlaybackMode]);
 
   // 当组件卸载时清理定时器、Wake Lock 和播放器资源
   useEffect(() => {
@@ -9885,13 +9976,43 @@ function PlayPageClient() {
         </div>
         {/* 第二行：播放器和选集 */}
         <div className='space-y-2'>
-          {/* 折叠控制 - 仅在 lg 及以上屏幕显示 */}
-          <div className='hidden lg:flex justify-end'>
+          <div className='flex items-center justify-end gap-2'>
+            {isHarmonyOS && isHlsPlaybackUrl(videoUrl) && (
+              <div
+                className='inline-flex items-center rounded-full border border-gray-200/60 bg-white/80 p-0.5 shadow-sm backdrop-blur-sm dark:border-gray-700/60 dark:bg-gray-800/80'
+                role='group'
+                aria-label='鸿蒙 HLS 播放器切换'
+              >
+                <span className='px-2 text-xs font-medium text-gray-500 dark:text-gray-400'>
+                  播放器
+                </span>
+                {([
+                  ['hlsjs', 'HLS.js'],
+                  ['native', '原生 HLS'],
+                ] as const).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type='button'
+                    onClick={() => switchHarmonyHlsPlaybackMode(mode)}
+                    aria-pressed={harmonyHlsPlaybackMode === mode}
+                    className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                      harmonyHlsPlaybackMode === mode
+                        ? 'bg-green-500 text-white shadow-sm'
+                        : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* 折叠控制 - 仅在 lg 及以上屏幕显示 */}
             <button
               onClick={() =>
                 setIsEpisodeSelectorCollapsed(!isEpisodeSelectorCollapsed)
               }
-              className='group relative flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-white/80 hover:bg-white dark:bg-gray-800/80 dark:hover:bg-gray-800 backdrop-blur-sm border border-gray-200/50 dark:border-gray-700/50 shadow-sm hover:shadow-md transition-all duration-200'
+              className='group relative hidden lg:flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-white/80 hover:bg-white dark:bg-gray-800/80 dark:hover:bg-gray-800 backdrop-blur-sm border border-gray-200/50 dark:border-gray-700/50 shadow-sm hover:shadow-md transition-all duration-200'
               title={
                 isEpisodeSelectorCollapsed ? '显示选集面板' : '隐藏选集面板'
               }
