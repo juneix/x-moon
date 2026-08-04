@@ -98,6 +98,7 @@ import { useDownload } from '@/contexts/DownloadContext';
 declare global {
   interface HTMLVideoElement {
     hls?: any;
+    harmonyNativeMetadataHandler?: () => void;
   }
 }
 
@@ -4065,6 +4066,17 @@ function PlayPageClient() {
           artPlayerRef.current.video.hls.destroy();
         }
 
+        const cleanupVideo = artPlayerRef.current.video as
+          | HTMLVideoElement
+          | undefined;
+        if (cleanupVideo?.harmonyNativeMetadataHandler) {
+          cleanupVideo.removeEventListener(
+            'loadedmetadata',
+            cleanupVideo.harmonyNativeMetadataHandler
+          );
+          delete cleanupVideo.harmonyNativeMetadataHandler;
+        }
+
         // 销毁 ArtPlayer 实例
         artPlayerRef.current.destroy();
         artPlayerRef.current = null;
@@ -7095,7 +7107,9 @@ function PlayPageClient() {
           volume: 0.7,
           isLive: false,
           muted: false,
-          autoplay: true,
+          // 原生 HLS 由 loadedmetadata 中的一次性逻辑恢复播放，避免夸克
+          // 超级播放器接管后又被 Artplayer 的延迟 autoplay 覆盖暂停状态。
+          autoplay: !(isHarmonyOS && harmonyHlsPlaybackMode === 'native'),
           pip: true,
           autoSize: false,
           autoMini: false,
@@ -7155,9 +7169,91 @@ function PlayPageClient() {
                   delete video.hls;
                 }
 
+                // 快速换源时移除上一个源尚未触发的恢复监听，避免旧进度
+                // 在新源 loadedmetadata 后被错误写回。
+                if (video.harmonyNativeMetadataHandler) {
+                  video.removeEventListener(
+                    'loadedmetadata',
+                    video.harmonyNativeMetadataHandler
+                  );
+                }
+
+                const nativeResumeTime = resumeTimeRef.current;
+                const shouldResumeNativePlayback =
+                  resumePlayingAfterHlsModeSwitchRef.current ?? true;
+                resumeTimeRef.current = null;
+                resumePlayingAfterHlsModeSwitchRef.current = null;
+
+                const restoreNativePlayback = () => {
+                  if (
+                    video.harmonyNativeMetadataHandler !==
+                    restoreNativePlayback
+                  ) {
+                    return;
+                  }
+                  delete video.harmonyNativeMetadataHandler;
+
+                  if (nativeResumeTime && nativeResumeTime > 0) {
+                    try {
+                      const duration = Number.isFinite(video.duration)
+                        ? video.duration
+                        : 0;
+                      const target =
+                        duration && nativeResumeTime >= duration - 2
+                          ? Math.max(0, duration - 5)
+                          : nativeResumeTime;
+                      video.currentTime = target;
+                      console.log(
+                        '[Harmony HLS] loadedmetadata 恢复播放进度:',
+                        target
+                      );
+                    } catch (error) {
+                      console.warn(
+                        '[Harmony HLS] loadedmetadata 恢复进度失败:',
+                        error
+                      );
+                    }
+                  }
+
+                  if (!shouldResumeNativePlayback) {
+                    video.pause();
+                    return;
+                  }
+
+                  // 只发起一次 play；若夸克在 Promise 完成前收到用户暂停，
+                  // Promise 完成后再次确认暂停，避免迟到的 play 覆盖用户操作。
+                  let pausedWhilePlayPending = false;
+                  const handlePendingPause = () => {
+                    pausedWhilePlayPending = true;
+                  };
+                  video.addEventListener('pause', handlePendingPause);
+                  video
+                    .play()
+                    .then(() => {
+                      if (pausedWhilePlayPending) {
+                        video.pause();
+                      }
+                    })
+                    .catch((error) => {
+                      console.warn('[Harmony HLS] 原生播放启动失败:', error);
+                    })
+                    .finally(() => {
+                      video.removeEventListener('pause', handlePendingPause);
+                    });
+                };
+
+                video.harmonyNativeMetadataHandler = restoreNativePlayback;
+                video.addEventListener(
+                  'loadedmetadata',
+                  restoreNativePlayback,
+                  { once: true }
+                );
+
                 // 不 attach MediaSource，直接把 m3u8 交给 ArkWeb/浏览器原生播放器。
                 // currentSrc 会保留实际播放地址，供浏览器内置投屏功能读取。
                 const nativePlaybackUrl = buildNativeHlsPlaybackUrl(url);
+                video.autoplay = false;
+                video.removeAttribute('autoplay');
                 video.src = nativePlaybackUrl;
                 ensureVideoSource(video, nativePlaybackUrl);
                 video.load();
@@ -9117,9 +9213,16 @@ function PlayPageClient() {
         // 监听视频可播放事件，这时恢复播放进度更可靠
         artPlayerRef.current.on('video:canplay', () => {
           let restoredResumeTime = false;
+          const isNativeHarmonyPlayback =
+            isHarmonyOS && harmonyHlsPlaybackMode === 'native';
 
-          // 若存在需要恢复的播放进度，则跳转
-          if (resumeTimeRef.current && resumeTimeRef.current > 0) {
+          // HLS.js 在 canplay 恢复；原生 HLS 已提前在 loadedmetadata 一次性恢复，
+          // 避免夸克超级播放器接管后被迟到的 canplay 覆盖状态。
+          if (
+            !isNativeHarmonyPlayback &&
+            resumeTimeRef.current &&
+            resumeTimeRef.current > 0
+          ) {
             try {
               const duration = artPlayerRef.current.duration || 0;
               let target = resumeTimeRef.current;
@@ -9133,11 +9236,16 @@ function PlayPageClient() {
               console.warn('恢复播放进度失败:', err);
             }
           }
-          resumeTimeRef.current = null;
+          if (!isNativeHarmonyPlayback) {
+            resumeTimeRef.current = null;
+          }
 
-          const shouldResumePlaying =
-            resumePlayingAfterHlsModeSwitchRef.current;
-          resumePlayingAfterHlsModeSwitchRef.current = null;
+          const shouldResumePlaying = isNativeHarmonyPlayback
+            ? null
+            : resumePlayingAfterHlsModeSwitchRef.current;
+          if (!isNativeHarmonyPlayback) {
+            resumePlayingAfterHlsModeSwitchRef.current = null;
+          }
           if (shouldResumePlaying === false) {
             artPlayerRef.current.pause();
           } else if (shouldResumePlaying === true) {
