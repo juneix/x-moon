@@ -10390,6 +10390,35 @@ function PlayPageClient() {
                           </span>
                         </button>
 
+                        {/* PC Client 打开 */}
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            const currentPath = (window.location.pathname + window.location.search).replace(/^\//, '');
+                            window.open(`moontvpluspc://${currentPath}`, '_blank');
+                          }}
+                          className='group relative flex items-center justify-center gap-1 w-8 h-8 lg:w-auto lg:h-auto lg:px-2 lg:py-1.5 bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700 text-xs font-medium rounded-md transition-all duration-200 shadow-sm hover:shadow-md cursor-pointer overflow-hidden border border-emerald-600 dark:border-emerald-700 flex-shrink-0'
+                          title='PC Client打开'
+                        >
+                          <svg
+                            className='w-4 h-4 flex-shrink-0 text-white'
+                            fill='none'
+                            stroke='currentColor'
+                            viewBox='0 0 24 24'
+                            xmlns='http://www.w3.org/2000/svg'
+                          >
+                            <path
+                              strokeLinecap='round'
+                              strokeLinejoin='round'
+                              strokeWidth={2}
+                              d='M4 5a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm-2 15h20M8 20h8'
+                            />
+                          </svg>
+                          <span className='hidden lg:inline max-w-0 group-hover:max-w-[120px] overflow-hidden whitespace-nowrap transition-all duration-200 ease-in-out text-white'>
+                            PC Client打开
+                          </span>
+                        </button>
+
                         {showExternalTranscodeButton && (
                           <button
                             onClick={async (e) => {
