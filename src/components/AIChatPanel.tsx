@@ -16,6 +16,13 @@ interface ChatMessage {
   content: string;
 }
 
+/** 工具链中的一个工具调用 */
+interface ToolChainItem {
+  name: string;
+  status: 'running' | 'done' | 'failed';
+  key?: string;
+}
+
 interface AIChatPanelProps {
   isOpen: boolean;
   onClose: () => void;
@@ -245,11 +252,85 @@ export default function AIChatPanel({
   const [isStreaming, setIsStreaming] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [currentUsername, setCurrentUsername] = useState('用户');
+  // 工具链：每个工具调用一行，记录工具名、关键参数、状态（独立于消息，不写入 sessionStorage）
+  const [toolChain, setToolChain] = useState<ToolChainItem[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const prevStorageKeyRef = useRef<string>(storageKey);
   const abortControllerRef = useRef<AbortController | null>(null);
   const hasLoadedRef = useRef(false);
+
+  // 工具名称 → 展示文案
+  const TOOL_LABELS: Record<string, string> = {
+    get_current_time: '获取当前时间',
+    web_search: '联网搜索',
+    fetch_page: '抓取网页',
+    douban_lookup: '豆瓣数据',
+    tmdb_lookup: 'TMDB 数据',
+    get_user_favorites: '读取收藏',
+    get_user_recent: '最近观看',
+  };
+
+  // 工具名称 → 关键参数提取（用于工具链展示）
+  const TOOL_KEY_EXTRACTORS: Record<string, (args: any) => string | undefined> = {
+    web_search: (a) => a?.query,
+    fetch_page: (a) => a?.url,
+    douban_lookup: (a) => a?.query || (a?.id ? `ID:${a.id}` : undefined),
+    tmdb_lookup: (a) =>
+      a?.trending ? '热榜' : a?.query || (a?.id ? `ID:${a.id}` : undefined),
+  };
+
+  // 工具链：追加一个进行中的工具调用
+  const pushToolChain = (name: string, args?: any) => {
+    const extractor = TOOL_KEY_EXTRACTORS[name];
+    const key = extractor ? extractor(args) : undefined;
+    setToolChain((prev) => [...prev, { name, status: 'running', key }]);
+  };
+
+  // 工具链：将某个进行中的工具标记为完成
+  const finishToolChain = (name: string) => {
+    setToolChain((prev) =>
+      prev.map((item) =>
+        item.name === name && item.status === 'running'
+          ? { ...item, status: 'done' }
+          : item
+      )
+    );
+  };
+
+  // 工具链渲染：显示每个工具调用的状态与关键参数
+  const renderToolChain = () => {
+    if (toolChain.length === 0) return null;
+    return (
+      <div className='w-full space-y-1.5'>
+        {toolChain.map((item, i) => {
+          const label = TOOL_LABELS[item.name] || item.name;
+          const keyText =
+            item.key && item.key.length > 60
+              ? `${item.key.slice(0, 60)}...`
+              : item.key;
+          return (
+            <div
+              key={i}
+              className='flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300'
+            >
+              {item.status === 'running' ? (
+                <Loader2 size={14} className='animate-spin text-purple-500' />
+              ) : (
+                <span className='text-green-500'>✓</span>
+              )}
+              <span className='flex-1 whitespace-nowrap'>{label}</span>
+              {keyText && (
+                <span className='max-w-[60%] truncate text-xs text-gray-400 dark:text-gray-500'>
+                  {keyText}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   // 将《》包裹的影视名称转换为链接
   const convertTitleToLink = (content: string): string => {
@@ -417,6 +498,7 @@ export default function AIChatPanel({
 
       // 清除消息并重置为欢迎消息
       console.log('视频上下文变化，清除聊天记录');
+      setToolChain([]);
       setMessages([{ role: 'assistant', content: welcomeMessage }]);
 
       // 重置加载标记，允许加载新视频的聊天记录
@@ -469,6 +551,7 @@ export default function AIChatPanel({
 
     const userMessage = input.trim();
     setInput('');
+    setToolChain([]);
 
     // 添加用户消息
     setMessages((prev) => [...prev, { role: 'user', content: userMessage }]);
@@ -543,6 +626,26 @@ export default function AIChatPanel({
 
               try {
                 const json = JSON.parse(data);
+
+                // 新版工具式调用的工具进度事件
+                if (json.type === 'tool') {
+                  if (json.status === 'start') {
+                    pushToolChain(json.name, json.args);
+                  } else if (json.status === 'done') {
+                    finishToolChain(json.name);
+                  } else if (json.status === 'failed') {
+                    // 工具执行失败也标记为完成，但可在链上保留
+                    setToolChain((prev) =>
+                      prev.map((item) =>
+                        item.name === json.name && item.status === 'running'
+                          ? { ...item, status: 'done' }
+                          : item
+                      )
+                    );
+                  }
+                  continue;
+                }
+
                 const text = json.text || '';
 
                 if (text) {
@@ -626,6 +729,7 @@ export default function AIChatPanel({
       });
     } finally {
       setIsStreaming(false);
+      setToolChain([]);
       abortControllerRef.current = null;
     }
   };
@@ -645,6 +749,7 @@ export default function AIChatPanel({
     sessionStorage.removeItem(storageKey);
 
     // 重置消息为欢迎消息
+    setToolChain([]);
     setMessages([{ role: 'assistant', content: welcomeMessage }]);
 
     console.log('已清空聊天上下文');
@@ -697,7 +802,11 @@ export default function AIChatPanel({
                 className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div
-                  className={`flex max-w-[80%] gap-3 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
+                  className={`flex gap-3 ${
+                    message.role === 'user'
+                      ? 'max-w-[80%] flex-row-reverse'
+                      : 'w-full'
+                  }`}
                 >
                   {/* 头像 */}
                   <div
@@ -721,7 +830,7 @@ export default function AIChatPanel({
                     className={`rounded-2xl px-4 py-2 ${
                       message.role === 'user'
                         ? 'bg-blue-500 text-white'
-                        : 'bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-white'
+                        : 'flex-1 bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-white'
                     }`}
                   >
                     {message.role === 'user' ? (
@@ -729,31 +838,32 @@ export default function AIChatPanel({
                         {message.content}
                       </p>
                     ) : (
-                      <div className='prose prose-sm max-w-none dark:prose-invert prose-p:my-2 prose-p:leading-relaxed prose-pre:bg-gray-800 prose-pre:text-gray-100 dark:prose-pre:bg-gray-900 prose-code:text-purple-600 dark:prose-code:text-purple-400 prose-code:bg-purple-50 dark:prose-code:bg-purple-900/20 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none prose-a:text-inherit dark:prose-a:text-inherit prose-a:no-underline hover:prose-a:underline prose-strong:text-gray-900 dark:prose-strong:text-white prose-ul:my-2 prose-ol:my-2 prose-li:my-1'>
-                        {renderAssistantContent(message.content)}
+                      <div className='w-full'>
+                        {/* 流式中的最后一个 assistant 消息：工具链合并显示在气泡内 */}
+                        {isStreaming &&
+                          index === messages.length - 1 &&
+                          renderToolChain()}
+                        <div className='prose prose-sm max-w-none dark:prose-invert prose-p:my-2 prose-p:leading-relaxed prose-pre:bg-gray-800 prose-pre:text-gray-100 dark:prose-pre:bg-gray-900 prose-code:text-purple-600 dark:prose-code:text-purple-400 prose-code:bg-purple-50 dark:prose-code:bg-purple-900/20 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none prose-a:text-inherit dark:prose-a:text-inherit prose-a:no-underline hover:prose-a:underline prose-strong:text-gray-900 dark:prose-strong:text-white prose-ul:my-2 prose-ol:my-2 prose-li:my-1'>
+                          {renderAssistantContent(message.content)}
+                        </div>
+                        {/* 流式但还没有任何文本时显示“AI正在思考...” */}
+                        {isStreaming &&
+                          index === messages.length - 1 &&
+                          !message.content &&
+                          toolChain.length === 0 && (
+                            <div className='flex items-center gap-2'>
+                              <Loader2 size={16} className='animate-spin text-gray-500' />
+                              <span className='text-sm text-gray-500 dark:text-gray-400'>
+                                AI正在思考...
+                              </span>
+                            </div>
+                          )}
                       </div>
                     )}
                   </div>
                 </div>
               </div>
             ))}
-
-            {/* 加载指示器 */}
-            {isStreaming && (
-              <div className='flex justify-start'>
-                <div className='flex max-w-[80%] gap-3'>
-                  <div className='flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-purple-500'>
-                    <Bot size={16} className='text-white' />
-                  </div>
-                  <div className='flex items-center gap-2 rounded-2xl bg-gray-100 px-4 py-2 dark:bg-gray-800'>
-                    <Loader2 size={16} className='animate-spin text-gray-500' />
-                    <span className='text-sm text-gray-500 dark:text-gray-400'>
-                      AI正在思考...
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
 
             <div ref={messagesEndRef} />
           </div>
@@ -881,7 +991,11 @@ export default function AIChatPanel({
                 className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div
-                  className={`flex max-w-[80%] gap-3 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
+                  className={`flex gap-3 ${
+                    message.role === 'user'
+                      ? 'max-w-[80%] flex-row-reverse'
+                      : 'w-full'
+                  }`}
                 >
                   {/* 头像 */}
                   <div
@@ -905,7 +1019,7 @@ export default function AIChatPanel({
                     className={`rounded-2xl px-4 py-2 ${
                       message.role === 'user'
                         ? 'bg-blue-500 text-white'
-                        : 'bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-white'
+                        : 'flex-1 bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-white'
                     }`}
                   >
                     {message.role === 'user' ? (
@@ -913,31 +1027,32 @@ export default function AIChatPanel({
                         {message.content}
                       </p>
                     ) : (
-                      <div className='prose prose-sm max-w-none dark:prose-invert prose-p:my-2 prose-p:leading-relaxed prose-pre:bg-gray-800 prose-pre:text-gray-100 dark:prose-pre:bg-gray-900 prose-code:text-purple-600 dark:prose-code:text-purple-400 prose-code:bg-purple-50 dark:prose-code:bg-purple-900/20 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none prose-a:text-inherit dark:prose-a:text-inherit prose-a:no-underline hover:prose-a:underline prose-strong:text-gray-900 dark:prose-strong:text-white prose-ul:my-2 prose-ol:my-2 prose-li:my-1'>
-                        {renderAssistantContent(message.content)}
+                      <div className='w-full'>
+                        {/* 流式中的最后一个 assistant 消息：工具链合并显示在气泡内 */}
+                        {isStreaming &&
+                          index === messages.length - 1 &&
+                          renderToolChain()}
+                        <div className='prose prose-sm max-w-none dark:prose-invert prose-p:my-2 prose-p:leading-relaxed prose-pre:bg-gray-800 prose-pre:text-gray-100 dark:prose-pre:bg-gray-900 prose-code:text-purple-600 dark:prose-code:text-purple-400 prose-code:bg-purple-50 dark:prose-code:bg-purple-900/20 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none prose-a:text-inherit dark:prose-a:text-inherit prose-a:no-underline hover:prose-a:underline prose-strong:text-gray-900 dark:prose-strong:text-white prose-ul:my-2 prose-ol:my-2 prose-li:my-1'>
+                          {renderAssistantContent(message.content)}
+                        </div>
+                        {/* 流式但还没有任何文本时显示“AI正在思考...” */}
+                        {isStreaming &&
+                          index === messages.length - 1 &&
+                          !message.content &&
+                          toolChain.length === 0 && (
+                            <div className='flex items-center gap-2'>
+                              <Loader2 size={16} className='animate-spin text-gray-500' />
+                              <span className='text-sm text-gray-500 dark:text-gray-400'>
+                                AI正在思考...
+                              </span>
+                            </div>
+                          )}
                       </div>
                     )}
                   </div>
                 </div>
               </div>
             ))}
-
-            {/* 加载指示器 */}
-            {isStreaming && (
-              <div className='flex justify-start'>
-                <div className='flex max-w-[80%] gap-3'>
-                  <div className='flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-purple-500'>
-                    <Bot size={16} className='text-white' />
-                  </div>
-                  <div className='flex items-center gap-2 rounded-2xl bg-gray-100 px-4 py-2 dark:bg-gray-800'>
-                    <Loader2 size={16} className='animate-spin text-gray-500' />
-                    <span className='text-sm text-gray-500 dark:text-gray-400'>
-                      AI正在思考...
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
 
             <div ref={messagesEndRef} />
           </div>

@@ -6,6 +6,13 @@ import {
   orchestrateDataSources,
   VideoContext,
 } from '@/lib/ai-orchestrator';
+import {
+  buildAgentSystemPrompt,
+  buildAgentTools,
+  NewProtocol,
+  runToolAgent,
+  ToolDataSources,
+} from '@/lib/ai-tool-agent';
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
 import { hasFeaturePermission } from '@/lib/permissions';
@@ -204,6 +211,121 @@ function transformToSSE(
   });
 }
 
+/**
+ * 新版（工具式调用）：模型自主调用 联网搜索/豆瓣/TMDB 工具后输出回答。
+ * 支持 OpenAI 普通协议 / OpenAI Response 协议 / Claude Messages 协议。
+ */
+async function handleNewMode(
+  aiConfig: any,
+  adminConfig: any,
+  body: ChatRequest,
+  request: NextRequest,
+  username?: string
+): Promise<NextResponse> {
+  const { message, context, history = [] } = body;
+  const protocol: NewProtocol =
+    aiConfig.NewProtocol === 'openai-responses' || aiConfig.NewProtocol === 'claude'
+      ? aiConfig.NewProtocol
+      : 'openai-completions';
+
+  console.log('🧭 [AI新版] 当前协议:', protocol, '| NewProtocol配置值:', aiConfig.NewProtocol);
+
+  // 解析凭据
+  let apiKey = '';
+  let baseURL = '';
+  let model = '';
+  if (protocol === 'claude') {
+    apiKey = aiConfig.ClaudeApiKey || '';
+    baseURL = 'https://api.anthropic.com';
+    model = aiConfig.ClaudeModel || '';
+  } else {
+    apiKey = aiConfig.OpenAIApiKey || aiConfig.CustomApiKey || '';
+    baseURL = aiConfig.OpenAIBaseURL || aiConfig.CustomBaseURL || '';
+    model = aiConfig.OpenAIModel || aiConfig.CustomModel || 'gpt-3.5-turbo';
+  }
+
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: `新版模式（${protocol}）未配置 API Key` },
+      { status: 400 }
+    );
+  }
+  if (!model) {
+    return NextResponse.json(
+      { error: `新版模式（${protocol}）未配置模型名称` },
+      { status: 400 }
+    );
+  }
+  if (!baseURL) {
+    return NextResponse.json(
+      { error: `新版模式（${protocol}）未配置 Base URL` },
+      { status: 400 }
+    );
+  }
+
+  // 组装数据源
+  const dataSources: ToolDataSources = {
+    webSearch:
+      aiConfig.EnableWebSearch && aiConfig.WebSearchProvider
+        ? {
+            provider: aiConfig.WebSearchProvider,
+            apiKey:
+              aiConfig.WebSearchProvider === 'tavily'
+                ? aiConfig.TavilyApiKey
+                : aiConfig.WebSearchProvider === 'serper'
+                  ? aiConfig.SerperApiKey
+                  : aiConfig.SerpApiKey,
+          }
+        : undefined,
+    tmdb:
+      adminConfig?.SiteConfig?.TMDBApiKey
+        ? {
+            apiKey: adminConfig.SiteConfig.TMDBApiKey,
+            proxy: adminConfig.SiteConfig.TMDBProxy,
+            reverseProxy: adminConfig.SiteConfig.TMDBReverseProxy,
+          }
+        : undefined,
+    username,
+  };
+  // 无 key 时不注册 web_search 工具
+  if (dataSources.webSearch && !dataSources.webSearch.apiKey) {
+    dataSources.webSearch = undefined;
+  }
+
+  const systemPrompt = buildAgentSystemPrompt({
+    customSystemPrompt: aiConfig.SystemPrompt,
+    context,
+  });
+
+  const result = await runToolAgent({
+    protocol,
+    apiKey,
+    baseURL,
+    model,
+    maxTokens: aiConfig.MaxTokens ?? 1000,
+    temperature: aiConfig.Temperature ?? 0.7,
+    streaming: aiConfig.EnableStreaming !== false,
+    systemPrompt,
+    history,
+    message,
+    tools: buildAgentTools(dataSources),
+    dataSources,
+    signal: request.signal,
+  });
+
+  if (result.kind === 'stream') {
+    return new NextResponse(result.stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      },
+    });
+  }
+
+  return NextResponse.json({ content: result.content });
+}
+
 export async function POST(request: NextRequest) {
   try {
     // 1. 验证用户登录
@@ -236,6 +358,11 @@ export async function POST(request: NextRequest) {
         { error: '消息内容不能为空' },
         { status: 400 }
       );
+    }
+
+    // 新版（工具式调用）分支：由管理员开启
+    if (aiConfig.EnableNewMode) {
+      return await handleNewMode(aiConfig, adminConfig, body, request, authInfo.username);
     }
 
     console.log('📨 收到AI聊天请求:', {

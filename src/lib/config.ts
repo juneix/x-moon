@@ -1132,6 +1132,10 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
     adminConfig.AIConfig.DecisionCustomBaseURL = normalizeApiBaseUrl(
       adminConfig.AIConfig.DecisionCustomBaseURL
     );
+    // 新版工具式调用：补充默认值，避免旧存储配置未定义
+    adminConfig.AIConfig.EnableNewMode = adminConfig.AIConfig.EnableNewMode ?? false;
+    adminConfig.AIConfig.NewProtocol =
+      adminConfig.AIConfig.NewProtocol ?? 'openai-completions';
   }
 
   if (adminConfig.TelegramConfig) {

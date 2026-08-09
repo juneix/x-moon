@@ -55,6 +55,8 @@ export async function POST(request: NextRequest) {
       TavilyApiKey,
       SerperApiKey,
       SerpApiKey,
+      EnableNewMode,
+      NewProtocol,
       EnableHomepageEntry,
       EnableVideoCardEntry,
       EnablePlayPageEntry,
@@ -91,6 +93,8 @@ export async function POST(request: NextRequest) {
       TavilyApiKey?: string;
       SerperApiKey?: string;
       SerpApiKey?: string;
+      EnableNewMode?: boolean;
+      NewProtocol?: 'openai-completions' | 'openai-responses' | 'claude';
       EnableHomepageEntry: boolean;
       EnableVideoCardEntry: boolean;
       EnablePlayPageEntry: boolean;
@@ -130,6 +134,9 @@ export async function POST(request: NextRequest) {
       (TavilyApiKey !== undefined && typeof TavilyApiKey !== 'string') ||
       (SerperApiKey !== undefined && typeof SerperApiKey !== 'string') ||
       (SerpApiKey !== undefined && typeof SerpApiKey !== 'string') ||
+      (EnableNewMode !== undefined && typeof EnableNewMode !== 'boolean') ||
+      (NewProtocol !== undefined &&
+        !['openai-completions', 'openai-responses', 'claude'].includes(NewProtocol)) ||
       typeof EnableHomepageEntry !== 'boolean' ||
       typeof EnableVideoCardEntry !== 'boolean' ||
       typeof EnablePlayPageEntry !== 'boolean' ||
@@ -179,6 +186,8 @@ export async function POST(request: NextRequest) {
       TavilyApiKey,
       SerperApiKey,
       SerpApiKey,
+      EnableNewMode,
+      NewProtocol,
       EnableHomepageEntry,
       EnableVideoCardEntry,
       EnablePlayPageEntry,
@@ -193,6 +202,9 @@ export async function POST(request: NextRequest) {
 
     // 写入数据库
     await db.saveAdminConfig(adminConfig);
+    // 刷新内存缓存，确保后续 getConfig() 立即读到最新配置（与其他 admin 路由一致）
+    const { setCachedConfig } = await import('@/lib/config');
+    await setCachedConfig(adminConfig);
 
     return NextResponse.json(
       { ok: true },

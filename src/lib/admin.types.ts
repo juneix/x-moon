@@ -249,6 +249,9 @@ export interface AdminConfig {
     TavilyApiKey?: string; // Tavily API密钥
     SerperApiKey?: string; // Serper.dev API密钥
     SerpApiKey?: string; // SerpAPI密钥
+    // 新版工具式调用配置
+    EnableNewMode?: boolean; // 是否启用新版工具式调用（LLM 工具/function-calling），默认 false
+    NewProtocol?: 'openai-completions' | 'openai-responses' | 'claude'; // 新版协议，默认 openai-completions
     // 功能开关
     EnableHomepageEntry: boolean; // 首页入口开关
     EnableVideoCardEntry: boolean; // VideoCard入口开关

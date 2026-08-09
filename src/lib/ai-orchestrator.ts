@@ -136,7 +136,7 @@ function extractEntities(message: string): Array<{ type: string; value: string }
 /**
  * 获取联网搜索结果
  */
-async function fetchWebSearch(
+export async function fetchWebSearch(
   query: string,
   provider: 'tavily' | 'serper' | 'serpapi',
   apiKey: string
@@ -201,7 +201,7 @@ async function fetchWebSearch(
  * 获取豆瓣数据
  * 服务器端直接调用豆瓣API
  */
-async function fetchDoubanData(params: {
+export async function fetchDoubanData(params: {
   id?: number;
   query?: string;
   kind?: string;
@@ -243,7 +243,7 @@ async function fetchDoubanData(params: {
  * 获取TMDB数据
  * 服务器端直接调用TMDB API
  */
-async function fetchTMDBData(
+export async function fetchTMDBData(
   params: {
     id?: number;
     type?: 'movie' | 'tv';
@@ -298,7 +298,7 @@ async function fetchTMDBData(
 /**
  * 格式化搜索结果为文本
  */
-function formatSearchResults(
+export function formatSearchResults(
   results: any,
   provider: 'tavily' | 'serper' | 'serpapi'
 ): string {

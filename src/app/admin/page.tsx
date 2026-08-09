@@ -15696,6 +15696,17 @@ const AIConfigComponent = ({
   const [serperApiKey, setSerperApiKey] = useState('');
   const [serpApiKey, setSerpApiKey] = useState('');
 
+  // 新版工具式调用配置
+  const [enableNewMode, setEnableNewMode] = useState(false);
+  const [newProtocol, setNewProtocol] = useState<
+    'openai-completions' | 'openai-responses' | 'claude'
+  >('openai-completions');
+  const [openaiApiKey, setOpenaiApiKey] = useState('');
+  const [openaiBaseURL, setOpenaiBaseURL] = useState('');
+  const [openaiModel, setOpenaiModel] = useState('');
+  const [claudeApiKey, setClaudeApiKey] = useState('');
+  const [claudeModel, setClaudeModel] = useState('');
+
   // 功能开关
   const [enableHomepageEntry, setEnableHomepageEntry] = useState(true);
   const [enableVideoCardEntry, setEnableVideoCardEntry] = useState(true);
@@ -15725,6 +15736,13 @@ const AIConfigComponent = ({
       setTavilyApiKey(config.AIConfig.TavilyApiKey || '');
       setSerperApiKey(config.AIConfig.SerperApiKey || '');
       setSerpApiKey(config.AIConfig.SerpApiKey || '');
+      setEnableNewMode(config.AIConfig.EnableNewMode || false);
+      setNewProtocol(config.AIConfig.NewProtocol || 'openai-completions');
+      setOpenaiApiKey(config.AIConfig.OpenAIApiKey || '');
+      setOpenaiBaseURL(config.AIConfig.OpenAIBaseURL || '');
+      setOpenaiModel(config.AIConfig.OpenAIModel || '');
+      setClaudeApiKey(config.AIConfig.ClaudeApiKey || '');
+      setClaudeModel(config.AIConfig.ClaudeModel || '');
       setEnableHomepageEntry(config.AIConfig.EnableHomepageEntry !== false);
       setEnableVideoCardEntry(config.AIConfig.EnableVideoCardEntry !== false);
       setEnablePlayPageEntry(config.AIConfig.EnablePlayPageEntry !== false);
@@ -15758,6 +15776,13 @@ const AIConfigComponent = ({
             TavilyApiKey: tavilyApiKey,
             SerperApiKey: serperApiKey,
             SerpApiKey: serpApiKey,
+            EnableNewMode: enableNewMode,
+            NewProtocol: newProtocol,
+            OpenAIApiKey: openaiApiKey,
+            OpenAIBaseURL: openaiBaseURL,
+            OpenAIModel: openaiModel,
+            ClaudeApiKey: claudeApiKey,
+            ClaudeModel: claudeModel,
             EnableHomepageEntry: enableHomepageEntry,
             EnableVideoCardEntry: enableVideoCardEntry,
             EnablePlayPageEntry: enablePlayPageEntry,
@@ -15840,7 +15865,59 @@ const AIConfigComponent = ({
         </label>
       </div>
 
-      {/* AI模型配置 */}
+      {/* 调用模式切换（旧版/新版卡片） */}
+      <div className='space-y-4'>
+        <h3 className='text-base font-semibold text-gray-900 dark:text-gray-100'>
+          调用模式
+        </h3>
+        <div className='grid grid-cols-1 sm:grid-cols-2 gap-3'>
+          {/* 旧版卡片 */}
+          <button
+            type='button'
+            onClick={() => setEnableNewMode(false)}
+            className={`p-4 rounded-lg border-2 text-left transition-colors ${
+              !enableNewMode
+                ? 'border-green-500 bg-green-50/50 dark:bg-green-900/10'
+                : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-gray-300 dark:hover:border-gray-600'
+            }`}
+          >
+            <div className='flex items-center justify-between'>
+              <span className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
+                旧版
+              </span>
+              {!enableNewMode && <Check className='w-5 h-5 text-green-600' />}
+            </div>
+            <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+              预先分析意图并抓取 联网搜索/豆瓣/TMDB 数据后回答
+            </p>
+          </button>
+
+          {/* 新版卡片 */}
+          <button
+            type='button'
+            onClick={() => setEnableNewMode(true)}
+            className={`p-4 rounded-lg border-2 text-left transition-colors ${
+              enableNewMode
+                ? 'border-green-500 bg-green-50/50 dark:bg-green-900/10'
+                : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-gray-300 dark:hover:border-gray-600'
+            }`}
+          >
+            <div className='flex items-center justify-between'>
+              <span className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
+                新版（工具式调用）
+              </span>
+              {enableNewMode && <Check className='w-5 h-5 text-green-600' />}
+            </div>
+            <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+              由模型自主决定是否调用相关工具
+            </p>
+          </button>
+        </div>
+      </div>
+
+      {/* 旧版 AI模型配置（仅旧版显示） */}
+      {!enableNewMode && (
+        <>
       <div className='space-y-4'>
         <h3 className='text-base font-semibold text-gray-900 dark:text-gray-100'>
           AI模型配置
@@ -15891,7 +15968,7 @@ const AIConfigComponent = ({
         </div>
       </div>
 
-      {/* 决策模型配置 */}
+      {/* 旧版 决策模型配置（仅旧版显示） */}
       <div className='space-y-4 p-4 border border-gray-200 dark:border-gray-700 rounded-lg'>
         <div>
           <h4 className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
@@ -15928,6 +16005,122 @@ const AIConfigComponent = ({
           </p>
         </div>
       </div>
+      </>
+      )}
+
+      {/* 新版 调用配置（仅新版显示） */}
+      {enableNewMode && (
+      <div className='space-y-4 p-4 border border-gray-200 dark:border-gray-700 rounded-lg'>
+        <div>
+          <h4 className='text-sm font-semibold text-gray-900 dark:text-gray-100'>
+            新版调用配置
+          </h4>
+          <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+            由模型自主决定是否调用相关工具
+          </p>
+        </div>
+
+        <div>
+          <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+            调用协议
+          </label>
+          <select
+            value={newProtocol}
+            onChange={(e) => setNewProtocol(e.target.value as any)}
+            className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100'
+          >
+            <option value='openai-completions'>OpenAI 普通协议 (chat/completions)</option>
+            <option value='openai-responses'>OpenAI Response 协议 (/responses)</option>
+            <option value='claude'>Claude Messages 协议 (/v1/messages)</option>
+          </select>
+        </div>
+
+        {(newProtocol === 'openai-completions' || newProtocol === 'openai-responses') && (
+          <div className='space-y-3 p-3 bg-purple-50/50 dark:bg-purple-900/10 rounded-lg'>
+            <div>
+              <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+                OpenAI API Key
+              </label>
+              <input
+                type='password'
+                value={openaiApiKey}
+                onChange={(e) => setOpenaiApiKey(e.target.value)}
+                placeholder='sk-...'
+                className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100'
+              />
+            </div>
+            <div>
+              <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+                OpenAI Base URL
+              </label>
+              <input
+                type='text'
+                value={openaiBaseURL}
+                onChange={(e) => setOpenaiBaseURL(e.target.value)}
+                placeholder='https://api.openai.com'
+                className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100'
+              />
+            </div>
+            <div>
+              <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+                OpenAI 模型
+              </label>
+              <input
+                type='text'
+                value={openaiModel}
+                onChange={(e) => setOpenaiModel(e.target.value)}
+                placeholder='gpt-4o-mini'
+                className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100'
+              />
+            </div>
+            <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+              Response 协议 Base URL 使用 OpenAI 根地址（如 https://api.openai.com），请求会追加 /responses。
+              留空则回退到旧版自定义API配置。
+            </p>
+          </div>
+        )}
+
+        {newProtocol === 'claude' && (
+          <div className='space-y-3 p-3 bg-purple-50/50 dark:bg-purple-900/10 rounded-lg'>
+            <div>
+              <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+                Claude API Key
+              </label>
+              <input
+                type='password'
+                value={claudeApiKey}
+                onChange={(e) => setClaudeApiKey(e.target.value)}
+                placeholder='sk-ant-...'
+                className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100'
+              />
+            </div>
+            <div>
+              <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+                Claude 模型
+              </label>
+              <input
+                type='text'
+                value={claudeModel}
+                onChange={(e) => setClaudeModel(e.target.value)}
+                placeholder='claude-sonnet-4-6'
+                className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100'
+              />
+            </div>
+            <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+              新版 Claude 协议使用官方 /v1/messages 接口。现代 Claude 模型不接受 temperature 参数，新版将自动省略。
+            </p>
+          </div>
+        )}
+
+        <div className='bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3'>
+          <p className='text-xs text-blue-700 dark:text-blue-400'>
+            💡 <strong>提示:</strong> 由模型自主决定是否调用相关工具。
+            需在站点设置中配置 TMDB API Key（TMDB 工具）、
+            在下方「启用联网搜索」中配置对应搜索服务 API Key（联网搜索工具）。豆瓣工具始终可用。
+          </p>
+        </div>
+      </div>
+      )}
 
       {/* 联网搜索配置 */}
       <div className='space-y-4 p-4 border border-gray-200 dark:border-gray-700 rounded-lg'>
