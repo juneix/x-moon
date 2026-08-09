@@ -33,6 +33,10 @@ import {
 
 export type NewProtocol = 'openai-completions' | 'openai-responses' | 'claude';
 
+function buildProtocolUrl(baseURL: string, path: string): string {
+  return baseURL.replace(/\/+$/, '') + '/' + path.replace(/^\/+/, '');
+}
+
 export type ToolName =
   | 'get_current_time'
   | 'web_search'
@@ -102,7 +106,7 @@ interface ProviderAdapter {
 /** 新版模式可用的数据源凭据（由路由从 AIConfig 组装） */
 export interface ToolDataSources {
   webSearch?: {
-    provider: 'tavily' | 'serper' | 'serpapi';
+    provider: 'tavily' | 'serper' | 'serpapi' | 'bing';
     apiKey: string;
   };
   tmdb?: {
@@ -132,7 +136,9 @@ const TOOL_DEFS: AgentToolDef[] = [
     name: 'web_search',
     description:
       '联网搜索最新的影视资讯、上映时间、续集/新季消息、演员近况等实时信息。' +
-      '当问题依赖当前日期之后发生的事，或训练数据中不存在的信息时调用。',
+      '当问题依赖当前日期之后发生的事，或训练数据中不存在的信息时调用。' +
+      'Bing RSS 结果主要是摘要和来源链接；使用 Bing 时，不能只依据外层摘要回答，' +
+      '应把最相关结果的 link 传给 fetch_page 获取正文后再回答。',
     parameters: {
       type: 'object',
       properties: {
@@ -271,8 +277,8 @@ export function buildAgentSystemPrompt(opts: {
 ## 可用工具
 你可以调用以下工具获取实时或权威数据（仅在需要时调用）：
 - get_current_time：获取当前时间（默认北京时间 UTC+8，含日期与时刻）。当问题涉及时间、年份、季节、上映/播出时段、或“最近、最新、去年、前年、上个月、今年”等相对时间表述时，务必先调用它确认当前日期时间。
-- web_search：联网搜索最新的影视资讯、上映时间、续集信息、演员近况等实时信息。
-- fetch_page：抓取指定网页的正文内容。当 web_search 只返回摘要、需要阅读完整文章/页面详情时调用。
+- web_search：联网搜索最新的影视资讯、上映时间、续集信息、演员近况等实时信息。Bing RSS 返回摘要和来源链接。
+- fetch_page：抓取指定网页的正文内容。当 web_search 返回 Bing RSS 结果、只返回摘要，或需要阅读完整文章/页面详情时，必须把相关结果的 link 传入此工具。
 - douban_lookup：查询豆瓣中文影视数据（评分、简介、导演、演员、用户评论）。按 ID 查详情，或按标题/关键词搜索。
 - tmdb_lookup：查询 TMDB 国际影视元数据。按 ID 查详情、按标题搜索，或获取本周热榜。
 - get_user_favorites：获取当前用户的收藏列表（最多20条）。了解用户喜好时调用。
@@ -281,11 +287,12 @@ export function buildAgentSystemPrompt(opts: {
 ## 使用工具的要求
 1. 先判断是否需要工具：涉及时间、评分、简介、最新上映、续集等时，优先调用对应工具获取真实数据。
 2. 用户的问题具有时效性时（含“今天、最近、最新、去年、前年、今年、上个月、下个月、几月、哪一年、即将上映、刚上映、更新到第几集”等任何时间/年份/季节相关表述），必须**先调用 get_current_time** 确认当前日期，再据此推算对应年份/时段并搜索。
-3. 用户要求“按我的喜好推荐”“推荐我喜欢的/收藏的类似作品”“我最近在看什么/继续上次没看完的”时，先调用 get_user_favorites / get_user_recent 了解用户偏好，再结合其他数据源推荐。
-4. 工具调用之间不要输出冗长说明，简短过渡即可。
-5. 用中文回复用户。
-6. 参考工具返回的数据回答；数据不足时诚实告知用户。
-7. 回答格式清晰：使用分段、列表让内容易读。`;
+3. 如果联网搜索返回 Bing RSS 结果，必须从结果中选择最相关的来源链接调用 fetch_page；正文抓取失败时，才可以退回使用搜索摘要，并明确说明信息来源有限。
+4. 用户要求“按我的喜好推荐”“推荐我喜欢的/收藏的类似作品”“我最近在看什么/继续上次没看完的”时，先调用 get_user_favorites / get_user_recent 了解用户偏好，再结合其他数据源推荐。
+5. 工具调用之间不要输出冗长说明，简短过渡即可。
+6. 用中文回复用户。
+7. 参考工具返回的数据回答；数据不足时诚实告知用户。
+8. 回答格式清晰：使用分段、列表让内容易读。`;
 
   if (opts.context?.title) {
     p += `\n\n## 【当前视频上下文】\n用户正在浏览: ${opts.context.title}`;
@@ -573,11 +580,28 @@ async function dispatchTool(
 /* OpenAI 普通协议（/chat/completions）                                */
 /* ------------------------------------------------------------------ */
 
-function parseToolArgs(rawArgs: string, fallbackName: string): any {
+function parseToolArgs(rawArgs: any, fallbackName: string): any {
+  if (rawArgs && typeof rawArgs === 'object') return rawArgs;
+  if (typeof rawArgs !== 'string' || !rawArgs.trim()) return {};
+
+  const source = rawArgs.trim();
   try {
-    return rawArgs ? JSON.parse(rawArgs) : {};
+    const parsed = JSON.parse(source);
+    if (typeof parsed === 'string') return parseToolArgs(parsed, fallbackName);
+    return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
-    console.warn(`⚠️ 工具参数解析失败（${fallbackName}）:`, rawArgs.slice(0, 100));
+    // 某些兼容网关会在 arguments 两侧附加引号或其他事件片段，尽量提取完整 JSON 对象。
+    const start = source.indexOf('{');
+    const end = source.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      try {
+        const parsed = JSON.parse(source.slice(start, end + 1));
+        if (parsed && typeof parsed === 'object') return parsed;
+      } catch {
+        /* fall through */
+      }
+    }
+    console.warn(`⚠️ 工具参数解析失败（${fallbackName}）:`, source.slice(0, 100));
     return {};
   }
 }
@@ -612,7 +636,8 @@ const openaiCompletionsAdapter: ProviderAdapter = {
     // OpenAI 普通协议始终支持 temperature
     body.temperature = opts.temperature;
 
-    const res = await fetch(`${opts.baseURL}/chat/completions`, {
+    const requestUrl = buildProtocolUrl(opts.baseURL, 'chat/completions');
+    const res = await fetch(requestUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -804,7 +829,8 @@ const openaiResponsesAdapter: ProviderAdapter = {
       stream: opts.streaming,
     };
 
-    const res = await fetch(`${opts.baseURL}/responses`, {
+    const requestUrl = buildProtocolUrl(opts.baseURL, 'responses');
+    const res = await fetch(requestUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -855,16 +881,35 @@ const openaiResponsesAdapter: ProviderAdapter = {
 
           if (type === 'response.output_text.delta') {
             opts.onText(json.delta || '');
+          } else if (type === 'response.output_item.added' || type === 'response.output_item.done') {
+            const item = json.item;
+            if (item?.type === 'function_call') {
+              const itemId = item.id || item.call_id || `item_${Object.keys(toolAcc).length}`;
+              toolAcc[itemId] = toolAcc[itemId] || { id: item.call_id || item.id, name: '', rawArgs: '' };
+              if (item.name) toolAcc[itemId].name = item.name;
+              if (item.call_id || item.id) toolAcc[itemId].id = item.call_id || item.id;
+              if (typeof item.arguments === 'string' && item.arguments) {
+                toolAcc[itemId].rawArgs = item.arguments;
+              }
+              if (!emittedToolStart.has(itemId) && toolAcc[itemId].name) {
+                emittedToolStart.add(itemId);
+                opts.onToolStart(toolAcc[itemId].name);
+              }
+            }
           } else if (type === 'response.function_call_arguments.delta') {
             const itemId = json.item_id || `item_${Object.keys(toolAcc).length}`;
             toolAcc[itemId] = toolAcc[itemId] || { id: itemId, name: '', rawArgs: '' };
             toolAcc[itemId].rawArgs += json.delta || '';
+          } else if (type === 'response.function_call_arguments.done') {
+            const itemId = json.item_id || '';
+            toolAcc[itemId] = toolAcc[itemId] || { id: itemId, name: '', rawArgs: '' };
+            if (typeof json.arguments === 'string') toolAcc[itemId].rawArgs = json.arguments;
           } else if (type === 'response.function_call') {
             const itemId = json.item_id || '';
             toolAcc[itemId] = toolAcc[itemId] || { id: itemId, name: '', rawArgs: '' };
             if (json.name) toolAcc[itemId].name = json.name;
             if (json.call_id) toolAcc[itemId].id = json.call_id;
-            if (json.arguments) toolAcc[itemId].rawArgs += json.arguments;
+            if (json.arguments) toolAcc[itemId].rawArgs = json.arguments;
             if (!emittedToolStart.has(itemId) && toolAcc[itemId].name) {
               emittedToolStart.add(itemId);
               opts.onToolStart(toolAcc[itemId].name);
@@ -882,7 +927,25 @@ const openaiResponsesAdapter: ProviderAdapter = {
     }
 
     if (completedOutput) {
-      return parseResponsesOutput(completedOutput);
+      // 兼容网关可能在 response.completed 中返回空 arguments 的情况：
+      // 用前面 arguments delta 累积的完整参数补回完成事件。
+      const mergedOutput = completedOutput.map((item: any) => {
+        if (item?.type !== 'function_call') return item;
+        const key = item.id || item.call_id;
+        const accumulated = key ? toolAcc[key] : undefined;
+        if (!accumulated) return item;
+        const hasArguments =
+          typeof item.arguments === 'string' &&
+          item.arguments.trim() &&
+          item.arguments.trim() !== '{}';
+        return {
+          ...item,
+          name: item.name || accumulated.name,
+          call_id: item.call_id || accumulated.id,
+          arguments: hasArguments ? item.arguments : accumulated.rawArgs || item.arguments || '{}',
+        };
+      });
+      return parseResponsesOutput(mergedOutput);
     }
 
     // 兜底：用累积的 delta 构造（不理想但可用）
@@ -957,7 +1020,8 @@ const claudeAdapter: ProviderAdapter = {
       body.temperature = opts.temperature;
     }
 
-    const res = await fetch(`${opts.baseURL}/messages`, {
+    const requestUrl = buildProtocolUrl(opts.baseURL, 'messages');
+    const res = await fetch(requestUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1009,7 +1073,10 @@ const claudeAdapter: ProviderAdapter = {
               toolBlocks[json.index] = {
                 id: block.id,
                 name: block.name,
-                rawInput: block.input ? JSON.stringify(block.input) : '',
+                rawInput:
+                  block.input && typeof block.input === 'object' && Object.keys(block.input).length > 0
+                    ? JSON.stringify(block.input)
+                    : '',
               };
               if (!emittedToolStart.has(json.index)) {
                 emittedToolStart.add(json.index);

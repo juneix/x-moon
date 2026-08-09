@@ -19,6 +19,11 @@ import { hasFeaturePermission } from '@/lib/permissions';
 
 export const runtime = 'nodejs';
 
+function normalizeClaudeBaseURL(baseURL: string): string {
+  const normalized = baseURL.trim().replace(/\/+$/, '');
+  return /\/v1$/i.test(normalized) ? normalized : `${normalized}/v1`;
+}
+
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -203,7 +208,10 @@ function transformToSSE(
         }
       } catch (error) {
         console.error('Stream error:', error);
-        controller.error(error);
+        const message = error instanceof Error ? error.message : String(error);
+        controller.enqueue(
+          new TextEncoder().encode(`data: ${JSON.stringify({ error: `AI请求失败: ${message}` })}\n\n`)
+        );
       } finally {
         controller.close();
       }
@@ -228,7 +236,6 @@ async function handleNewMode(
       ? aiConfig.NewProtocol
       : 'openai-completions';
 
-  console.log('🧭 [AI新版] 当前协议:', protocol, '| NewProtocol配置值:', aiConfig.NewProtocol);
 
   // 解析凭据
   let apiKey = '';
@@ -236,7 +243,7 @@ async function handleNewMode(
   let model = '';
   if (protocol === 'claude') {
     apiKey = aiConfig.ClaudeApiKey || '';
-    baseURL = 'https://api.anthropic.com';
+    baseURL = normalizeClaudeBaseURL(aiConfig.ClaudeBaseURL || 'https://api.anthropic.com');
     model = aiConfig.ClaudeModel || '';
   } else {
     apiKey = aiConfig.OpenAIApiKey || aiConfig.CustomApiKey || '';
@@ -274,7 +281,9 @@ async function handleNewMode(
                 ? aiConfig.TavilyApiKey
                 : aiConfig.WebSearchProvider === 'serper'
                   ? aiConfig.SerperApiKey
-                  : aiConfig.SerpApiKey,
+                  : aiConfig.WebSearchProvider === 'serpapi'
+                    ? aiConfig.SerpApiKey
+                    : '',
           }
         : undefined,
     tmdb:
@@ -288,7 +297,7 @@ async function handleNewMode(
     username,
   };
   // 无 key 时不注册 web_search 工具
-  if (dataSources.webSearch && !dataSources.webSearch.apiKey) {
+  if (dataSources.webSearch && !dataSources.webSearch.apiKey && dataSources.webSearch.provider !== 'bing') {
     dataSources.webSearch = undefined;
   }
 

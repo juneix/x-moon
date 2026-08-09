@@ -1123,6 +1123,9 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
     adminConfig.AIConfig.OpenAIBaseURL = normalizeApiBaseUrl(
       adminConfig.AIConfig.OpenAIBaseURL
     );
+    adminConfig.AIConfig.ClaudeBaseURL = normalizeApiBaseUrl(
+      adminConfig.AIConfig.ClaudeBaseURL
+    );
     adminConfig.AIConfig.CustomBaseURL = normalizeApiBaseUrl(
       adminConfig.AIConfig.CustomBaseURL
     );
@@ -1133,7 +1136,7 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
       adminConfig.AIConfig.DecisionCustomBaseURL
     );
     // 新版工具式调用：补充默认值，避免旧存储配置未定义
-    adminConfig.AIConfig.EnableNewMode = adminConfig.AIConfig.EnableNewMode ?? false;
+    adminConfig.AIConfig.EnableNewMode = adminConfig.AIConfig.EnableNewMode ?? true;
     adminConfig.AIConfig.NewProtocol =
       adminConfig.AIConfig.NewProtocol ?? 'openai-completions';
   }

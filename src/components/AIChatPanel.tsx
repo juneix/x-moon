@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
-import { Bot, Loader2, Send, Sparkles, Trash2,X } from 'lucide-react';
+import { Bot, Loader2, RefreshCw, Send, Sparkles, Trash2, X } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -14,6 +14,8 @@ import { VideoContext } from '@/lib/ai-orchestrator';
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  error?: boolean;
+  retryMessage?: string;
 }
 
 /** 工具链中的一个工具调用 */
@@ -546,21 +548,25 @@ export default function AIChatPanel({
     }
   }, [isOpen, useDrawer]);
 
-  const handleSendMessage = async () => {
-    if (!input.trim() || isStreaming) return;
+  const handleSendMessage = async (retryMessage?: string) => {
+    const isRetry = typeof retryMessage === 'string';
+    if (isStreaming || (!isRetry && !input.trim())) return;
 
-    const userMessage = input.trim();
-    setInput('');
+    const userMessage = isRetry ? retryMessage.trim() : input.trim();
+    const requestHistory = (isRetry ? messages.slice(0, -2) : messages).filter(
+      (m) => m.role !== 'assistant' || m.content !== welcomeMessage
+    );
+    if (!isRetry) setInput('');
     setToolChain([]);
 
-    // 添加用户消息
-    setMessages((prev) => [...prev, { role: 'user', content: userMessage }]);
+    // 重试时移除原来的用户消息和错误消息，避免历史记录重复。
+    setMessages((prev) => [
+      ...(isRetry ? prev.slice(0, -2) : prev),
+      { role: 'user', content: userMessage },
+      { role: 'assistant', content: '' },
+    ]);
 
-    // 开始流式响应
     setIsStreaming(true);
-
-    // 先添加一个空的助手消息用于流式更新或显示错误
-    setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
 
     // 创建新的 AbortController
     const abortController = new AbortController();
@@ -575,7 +581,7 @@ export default function AIChatPanel({
         body: JSON.stringify({
           message: userMessage,
           context,
-    history: messages.filter((m) => m.role !== 'assistant' || m.content !== welcomeMessage),
+          history: requestHistory,
         }),
         signal: abortController.signal,
       });
@@ -599,6 +605,7 @@ export default function AIChatPanel({
         }
 
         let assistantMessage = '';
+        let streamError = '';
         let buffer = ''; // 缓冲区，用于保存不完整的行
 
         while (true) {
@@ -646,6 +653,11 @@ export default function AIChatPanel({
                   continue;
                 }
 
+                if (json.error) {
+                  streamError = String(json.error);
+                  continue;
+                }
+
                 const text = json.text || '';
 
                 if (text) {
@@ -676,6 +688,10 @@ export default function AIChatPanel({
             if (data && data !== '[DONE]') {
               try {
                 const json = JSON.parse(data);
+                if (json.error) {
+                  streamError = String(json.error);
+                }
+
                 const text = json.text || '';
                 if (text) {
                   assistantMessage += text;
@@ -694,9 +710,15 @@ export default function AIChatPanel({
             }
           }
         }
+
+        if (streamError) throw new Error(streamError);
+        if (!assistantMessage.trim()) {
+          throw new Error('AI服务未返回有效内容，请检查 API 密钥和服务配置');
+        }
       } else {
         // 处理非流式响应
         const data = await response.json();
+        if (data.error) throw new Error(String(data.error));
         const content = data.content || '';
 
         // 更新最后一条消息为完整响应
@@ -723,7 +745,9 @@ export default function AIChatPanel({
         const newMessages = [...prev];
         newMessages[newMessages.length - 1] = {
           role: 'assistant',
-          content: `❌ 抱歉，出现了错误：\n\n${(error as Error).message}\n\n请检查：\n- AI服务配置是否正确\n- API密钥是否有效\n- 网络连接是否正常`,
+          content: `❌ 抱歉，出现了错误：\n\n${(error as Error).message}`,
+          error: true,
+          retryMessage: userMessage,
         };
         return newMessages;
       });
@@ -846,6 +870,19 @@ export default function AIChatPanel({
                         <div className='prose prose-sm max-w-none dark:prose-invert prose-p:my-2 prose-p:leading-relaxed prose-pre:bg-gray-800 prose-pre:text-gray-100 dark:prose-pre:bg-gray-900 prose-code:text-purple-600 dark:prose-code:text-purple-400 prose-code:bg-purple-50 dark:prose-code:bg-purple-900/20 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none prose-a:text-inherit dark:prose-a:text-inherit prose-a:no-underline hover:prose-a:underline prose-strong:text-gray-900 dark:prose-strong:text-white prose-ul:my-2 prose-ol:my-2 prose-li:my-1'>
                           {renderAssistantContent(message.content)}
                         </div>
+                        {message.error &&
+                          index === messages.length - 1 &&
+                          !isStreaming &&
+                          message.retryMessage && (
+                            <button
+                              type='button'
+                              onClick={() => handleSendMessage(message.retryMessage)}
+                              className='mt-3 inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 transition-colors hover:bg-gray-200 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700'
+                            >
+                              <RefreshCw size={14} />
+                              重试
+                            </button>
+                          )}
                         {/* 流式但还没有任何文本时显示“AI正在思考...” */}
                         {isStreaming &&
                           index === messages.length - 1 &&
@@ -900,7 +937,7 @@ export default function AIChatPanel({
               }}
             />
             <button
-              onClick={handleSendMessage}
+              onClick={() => handleSendMessage()}
               disabled={!input.trim() || isStreaming}
               className='flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-purple-500 text-white transition-colors hover:bg-purple-600 disabled:cursor-not-allowed disabled:opacity-50'
             >
@@ -1035,6 +1072,19 @@ export default function AIChatPanel({
                         <div className='prose prose-sm max-w-none dark:prose-invert prose-p:my-2 prose-p:leading-relaxed prose-pre:bg-gray-800 prose-pre:text-gray-100 dark:prose-pre:bg-gray-900 prose-code:text-purple-600 dark:prose-code:text-purple-400 prose-code:bg-purple-50 dark:prose-code:bg-purple-900/20 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none prose-a:text-inherit dark:prose-a:text-inherit prose-a:no-underline hover:prose-a:underline prose-strong:text-gray-900 dark:prose-strong:text-white prose-ul:my-2 prose-ol:my-2 prose-li:my-1'>
                           {renderAssistantContent(message.content)}
                         </div>
+                        {message.error &&
+                          index === messages.length - 1 &&
+                          !isStreaming &&
+                          message.retryMessage && (
+                            <button
+                              type='button'
+                              onClick={() => handleSendMessage(message.retryMessage)}
+                              className='mt-3 inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 transition-colors hover:bg-gray-200 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700'
+                            >
+                              <RefreshCw size={14} />
+                              重试
+                            </button>
+                          )}
                         {/* 流式但还没有任何文本时显示“AI正在思考...” */}
                         {isStreaming &&
                           index === messages.length - 1 &&
@@ -1089,7 +1139,7 @@ export default function AIChatPanel({
               }}
             />
             <button
-              onClick={handleSendMessage}
+              onClick={() => handleSendMessage()}
               disabled={!input.trim() || isStreaming}
               className='flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-purple-500 text-white transition-colors hover:bg-purple-600 disabled:cursor-not-allowed disabled:opacity-50'
             >

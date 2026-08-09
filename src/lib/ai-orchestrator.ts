@@ -7,6 +7,7 @@
 import { fetchDoubanData as fetchDoubanAPI } from '@/lib/douban';
 import { getNextApiKey } from '@/lib/tmdb.client';
 import { normalizeApiBaseUrl } from '@/lib/url';
+import { parseStringPromise } from 'xml2js';
 
 export interface VideoContext {
   title?: string;
@@ -138,7 +139,7 @@ function extractEntities(message: string): Array<{ type: string; value: string }
  */
 export async function fetchWebSearch(
   query: string,
-  provider: 'tavily' | 'serper' | 'serpapi',
+  provider: 'tavily' | 'serper' | 'serpapi' | 'bing',
   apiKey: string
 ): Promise<any> {
   try {
@@ -190,6 +191,27 @@ export async function fetchWebSearch(
       }
 
       return await response.json();
+    } else if (provider === 'bing') {
+      const response = await fetch(
+        `https://www.bing.com/search?format=rss&q=${encodeURIComponent(query)}`,
+        {
+          headers: {
+            Accept: 'application/rss+xml, application/xml, text/xml',
+            'User-Agent': 'Mozilla/5.0 (compatible; MoonTVPlusBot/1.0)',
+          },
+        }
+      );
+      if (!response.ok) throw new Error(`Bing RSS error: ${response.status}`);
+      const parsed = await parseStringPromise(await response.text(), { trim: true });
+      const items = parsed?.rss?.channel?.[0]?.item || [];
+      return {
+        items: items.slice(0, 5).map((item: any) => ({
+          title: item.title?.[0] || '',
+          snippet: item.description?.[0] || '',
+          link: item.link?.[0] || '',
+          pubDate: item.pubDate?.[0] || '',
+        })),
+      };
     }
   } catch (error) {
     console.error('Web search error:', error);
@@ -300,7 +322,7 @@ export async function fetchTMDBData(
  */
 export function formatSearchResults(
   results: any,
-  provider: 'tavily' | 'serper' | 'serpapi'
+  provider: 'tavily' | 'serper' | 'serpapi' | 'bing'
 ): string {
   if (!results) return '';
 
@@ -332,6 +354,17 @@ export function formatSearchResults(
 标题: ${r.title}
 摘要: ${r.snippet}
 来源: ${r.link}
+`
+        )
+        .join('\n');
+    } else if (provider === 'bing' && results.items) {
+      return results.items
+        .map(
+          (r: any) => `
+标题: ${r.title}
+摘要: ${r.snippet}
+来源: ${r.link}
+时间: ${r.pubDate || '未知'}
 `
         )
         .join('\n');
@@ -520,7 +553,7 @@ export async function orchestrateDataSources(
   context?: VideoContext,
   config?: {
     enableWebSearch: boolean;
-    webSearchProvider?: 'tavily' | 'serper' | 'serpapi';
+    webSearchProvider?: 'tavily' | 'serper' | 'serpapi' | 'bing';
     tavilyApiKey?: string;
     serperApiKey?: string;
     serpApiKey?: string;
@@ -549,7 +582,8 @@ export async function orchestrateDataSources(
       (
         (config.webSearchProvider === 'tavily' && config.tavilyApiKey) ||
         (config.webSearchProvider === 'serper' && config.serperApiKey) ||
-        (config.webSearchProvider === 'serpapi' && config.serpApiKey)
+        (config.webSearchProvider === 'serpapi' && config.serpApiKey) ||
+        config.webSearchProvider === 'bing'
       ));
 
     const hasTMDB = !!(config.tmdbApiKey);
@@ -618,12 +652,14 @@ export async function orchestrateDataSources(
         ? config.tavilyApiKey
         : provider === 'serper'
           ? config.serperApiKey
-          : config.serpApiKey;
+          : provider === 'serpapi'
+            ? config.serpApiKey
+            : '';
 
-    if (apiKey) {
+    if (apiKey || provider === 'bing') {
       // 使用决策模型优化的查询，如果没有则使用原始消息
       const searchQuery = (intent as any).optimizedWebSearchQuery || userMessage;
-      webSearchPromise = fetchWebSearch(searchQuery, provider, apiKey);
+      webSearchPromise = fetchWebSearch(searchQuery, provider, apiKey || '');
       dataPromises.push(webSearchPromise);
     }
   }

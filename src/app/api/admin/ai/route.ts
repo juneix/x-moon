@@ -36,6 +36,7 @@ export async function POST(request: NextRequest) {
       OpenAIBaseURL,
       OpenAIModel,
       ClaudeApiKey,
+      ClaudeBaseURL,
       ClaudeModel,
       CustomApiKey,
       CustomBaseURL,
@@ -74,6 +75,7 @@ export async function POST(request: NextRequest) {
       OpenAIBaseURL?: string;
       OpenAIModel?: string;
       ClaudeApiKey?: string;
+      ClaudeBaseURL?: string;
       ClaudeModel?: string;
       CustomApiKey?: string;
       CustomBaseURL?: string;
@@ -89,7 +91,7 @@ export async function POST(request: NextRequest) {
       DecisionCustomBaseURL?: string;
       DecisionCustomModel?: string;
       EnableWebSearch: boolean;
-      WebSearchProvider?: 'tavily' | 'serper' | 'serpapi';
+      WebSearchProvider?: 'tavily' | 'serper' | 'serpapi' | 'bing';
       TavilyApiKey?: string;
       SerperApiKey?: string;
       SerpApiKey?: string;
@@ -115,6 +117,7 @@ export async function POST(request: NextRequest) {
       (OpenAIBaseURL !== undefined && typeof OpenAIBaseURL !== 'string') ||
       (OpenAIModel !== undefined && typeof OpenAIModel !== 'string') ||
       (ClaudeApiKey !== undefined && typeof ClaudeApiKey !== 'string') ||
+      (ClaudeBaseURL !== undefined && typeof ClaudeBaseURL !== 'string') ||
       (ClaudeModel !== undefined && typeof ClaudeModel !== 'string') ||
       (CustomApiKey !== undefined && typeof CustomApiKey !== 'string') ||
       (CustomBaseURL !== undefined && typeof CustomBaseURL !== 'string') ||
@@ -130,7 +133,7 @@ export async function POST(request: NextRequest) {
       (DecisionCustomBaseURL !== undefined && typeof DecisionCustomBaseURL !== 'string') ||
       (DecisionCustomModel !== undefined && typeof DecisionCustomModel !== 'string') ||
       typeof EnableWebSearch !== 'boolean' ||
-      (WebSearchProvider !== undefined && !['tavily', 'serper', 'serpapi'].includes(WebSearchProvider)) ||
+      (WebSearchProvider !== undefined && !['tavily', 'serper', 'serpapi', 'bing'].includes(WebSearchProvider)) ||
       (TavilyApiKey !== undefined && typeof TavilyApiKey !== 'string') ||
       (SerperApiKey !== undefined && typeof SerperApiKey !== 'string') ||
       (SerpApiKey !== undefined && typeof SerpApiKey !== 'string') ||
@@ -167,6 +170,7 @@ export async function POST(request: NextRequest) {
       OpenAIBaseURL: normalizeApiBaseUrl(OpenAIBaseURL),
       OpenAIModel,
       ClaudeApiKey,
+      ClaudeBaseURL: normalizeApiBaseUrl(ClaudeBaseURL),
       ClaudeModel,
       CustomApiKey,
       CustomBaseURL: normalizeApiBaseUrl(CustomBaseURL),

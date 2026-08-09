@@ -227,6 +227,7 @@ export interface AdminConfig {
     OpenAIModel?: string; // 模型名称，如gpt-4, gpt-3.5-turbo
     // Claude配置
     ClaudeApiKey?: string;
+    ClaudeBaseURL?: string; // Claude Messages API根地址
     ClaudeModel?: string; // 模型名称，如claude-3-opus-20240229
     // 自定义配置（兼容OpenAI格式的API）
     CustomApiKey?: string;
@@ -245,12 +246,12 @@ export interface AdminConfig {
     DecisionCustomModel?: string;
     // 联网搜索配置
     EnableWebSearch: boolean; // 是否启用联网搜索
-    WebSearchProvider?: 'tavily' | 'serper' | 'serpapi'; // 搜索服务提供商
+    WebSearchProvider?: 'tavily' | 'serper' | 'serpapi' | 'bing'; // 搜索服务提供商
     TavilyApiKey?: string; // Tavily API密钥
     SerperApiKey?: string; // Serper.dev API密钥
     SerpApiKey?: string; // SerpAPI密钥
     // 新版工具式调用配置
-    EnableNewMode?: boolean; // 是否启用新版工具式调用（LLM 工具/function-calling），默认 false
+    EnableNewMode?: boolean; // 是否启用新版工具式调用（LLM 工具/function-calling），默认 true
     NewProtocol?: 'openai-completions' | 'openai-responses' | 'claude'; // 新版协议，默认 openai-completions
     // 功能开关
     EnableHomepageEntry: boolean; // 首页入口开关

@@ -15690,14 +15690,14 @@ const AIConfigComponent = ({
   // 联网搜索配置
   const [enableWebSearch, setEnableWebSearch] = useState(false);
   const [webSearchProvider, setWebSearchProvider] = useState<
-    'tavily' | 'serper' | 'serpapi'
+    'tavily' | 'serper' | 'serpapi' | 'bing'
   >('tavily');
   const [tavilyApiKey, setTavilyApiKey] = useState('');
   const [serperApiKey, setSerperApiKey] = useState('');
   const [serpApiKey, setSerpApiKey] = useState('');
 
   // 新版工具式调用配置
-  const [enableNewMode, setEnableNewMode] = useState(false);
+  const [enableNewMode, setEnableNewMode] = useState(true);
   const [newProtocol, setNewProtocol] = useState<
     'openai-completions' | 'openai-responses' | 'claude'
   >('openai-completions');
@@ -15705,6 +15705,7 @@ const AIConfigComponent = ({
   const [openaiBaseURL, setOpenaiBaseURL] = useState('');
   const [openaiModel, setOpenaiModel] = useState('');
   const [claudeApiKey, setClaudeApiKey] = useState('');
+  const [claudeBaseURL, setClaudeBaseURL] = useState('');
   const [claudeModel, setClaudeModel] = useState('');
 
   // 功能开关
@@ -15736,12 +15737,13 @@ const AIConfigComponent = ({
       setTavilyApiKey(config.AIConfig.TavilyApiKey || '');
       setSerperApiKey(config.AIConfig.SerperApiKey || '');
       setSerpApiKey(config.AIConfig.SerpApiKey || '');
-      setEnableNewMode(config.AIConfig.EnableNewMode || false);
+      setEnableNewMode(config.AIConfig.EnableNewMode ?? true);
       setNewProtocol(config.AIConfig.NewProtocol || 'openai-completions');
       setOpenaiApiKey(config.AIConfig.OpenAIApiKey || '');
       setOpenaiBaseURL(config.AIConfig.OpenAIBaseURL || '');
       setOpenaiModel(config.AIConfig.OpenAIModel || '');
       setClaudeApiKey(config.AIConfig.ClaudeApiKey || '');
+      setClaudeBaseURL(config.AIConfig.ClaudeBaseURL || '');
       setClaudeModel(config.AIConfig.ClaudeModel || '');
       setEnableHomepageEntry(config.AIConfig.EnableHomepageEntry !== false);
       setEnableVideoCardEntry(config.AIConfig.EnableVideoCardEntry !== false);
@@ -15782,6 +15784,7 @@ const AIConfigComponent = ({
             OpenAIBaseURL: openaiBaseURL,
             OpenAIModel: openaiModel,
             ClaudeApiKey: claudeApiKey,
+            ClaudeBaseURL: claudeBaseURL,
             ClaudeModel: claudeModel,
             EnableHomepageEntry: enableHomepageEntry,
             EnableVideoCardEntry: enableVideoCardEntry,
@@ -16073,10 +16076,6 @@ const AIConfigComponent = ({
                 className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100'
               />
             </div>
-            <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
-              Response 协议 Base URL 使用 OpenAI 根地址（如 https://api.openai.com），请求会追加 /responses。
-              留空则回退到旧版自定义API配置。
-            </p>
           </div>
         )}
 
@@ -16096,6 +16095,18 @@ const AIConfigComponent = ({
             </div>
             <div>
               <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+                Claude Base URL
+              </label>
+              <input
+                type='text'
+                value={claudeBaseURL}
+                onChange={(e) => setClaudeBaseURL(e.target.value)}
+                placeholder='https://api.anthropic.com'
+                className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100'
+              />
+            </div>
+            <div>
+              <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
                 Claude 模型
               </label>
               <input
@@ -16106,9 +16117,6 @@ const AIConfigComponent = ({
                 className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100'
               />
             </div>
-            <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
-              新版 Claude 协议使用官方 /v1/messages 接口。现代 Claude 模型不接受 temperature 参数，新版将自动省略。
-            </p>
           </div>
         )}
 
@@ -16158,6 +16166,7 @@ const AIConfigComponent = ({
                 <option value='tavily'>Tavily (推荐)</option>
                 <option value='serper'>Serper.dev</option>
                 <option value='serpapi'>SerpAPI</option>
+                <option value='bing'>Bing RSS（免费，无需 API Key）</option>
               </select>
             </div>
 
