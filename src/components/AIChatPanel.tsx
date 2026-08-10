@@ -16,6 +16,14 @@ interface ChatMessage {
   content: string;
   error?: boolean;
   retryMessage?: string;
+  /** 本回合执行过的工具调用（含参数与返回结果），随 history 回喂服务端 */
+  toolCalls?: Array<{
+    name: string;
+    key?: string;
+    args?: any;
+    result?: string;
+    ok?: boolean;
+  }>;
 }
 
 /** 工具链中的一个工具调用 */
@@ -23,6 +31,9 @@ interface ToolChainItem {
   name: string;
   status: 'running' | 'done' | 'failed';
   key?: string;
+  args?: any;
+  result?: string;
+  ok?: boolean;
 }
 
 interface AIChatPanelProps {
@@ -256,6 +267,8 @@ export default function AIChatPanel({
   const [currentUsername, setCurrentUsername] = useState('用户');
   // 工具链：每个工具调用一行，记录工具名、关键参数、状态（独立于消息，不写入 sessionStorage）
   const [toolChain, setToolChain] = useState<ToolChainItem[]>([]);
+  // 工具链实时镜像，供流式结束固化到消息时读取最新状态（setState 是异步的）
+  const toolChainRef = useRef<ToolChainItem[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const prevStorageKeyRef = useRef<string>(storageKey);
@@ -286,27 +299,40 @@ export default function AIChatPanel({
   const pushToolChain = (name: string, args?: any) => {
     const extractor = TOOL_KEY_EXTRACTORS[name];
     const key = extractor ? extractor(args) : undefined;
-    setToolChain((prev) => [...prev, { name, status: 'running', key }]);
+    const item: ToolChainItem = { name, status: 'running', key, args };
+    toolChainRef.current = [...toolChainRef.current, item];
+    setToolChain(toolChainRef.current);
   };
 
   // 工具链：将某个进行中的工具标记为完成
-  const finishToolChain = (name: string) => {
-    setToolChain((prev) =>
-      prev.map((item) =>
-        item.name === name && item.status === 'running'
-          ? { ...item, status: 'done' }
-          : item
-      )
+  const finishToolChain = (name: string, done?: { result?: string; ok?: boolean }) => {
+    toolChainRef.current = toolChainRef.current.map((item) =>
+      item.name === name && item.status === 'running'
+        ? {
+            ...item,
+            status: done && done.ok === false ? 'failed' : 'done',
+            ...(done && { result: done.result, ok: done.ok }),
+          }
+        : item
     );
+    setToolChain(toolChainRef.current);
   };
 
-  // 工具链渲染：显示每个工具调用的状态与关键参数
-  const renderToolChain = () => {
-    if (toolChain.length === 0) return null;
+  // 工具链：全部重置（新请求 / 上下文切换 / 清空）
+  const clearToolChain = () => {
+    toolChainRef.current = [];
+    setToolChain([]);
+  };
+
+  // 工具链渲染：显示每个工具调用的状态与关键参数（live=流式中，显示 spinner；否则显示完成状态）
+  const renderToolChain = (items: ToolChainItem[], live: boolean) => {
+    if (!items.length) return null;
     return (
       <div className='w-full space-y-1.5'>
-        {toolChain.map((item, i) => {
+        {items.map((item, i) => {
           const label = TOOL_LABELS[item.name] || item.name;
+          // 持久化链没有 status，按 ok 推导；live 链自带 status
+          const status = item.status || (item.ok === false ? 'failed' : 'done');
           const keyText =
             item.key && item.key.length > 60
               ? `${item.key.slice(0, 60)}...`
@@ -316,10 +342,18 @@ export default function AIChatPanel({
               key={i}
               className='flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300'
             >
-              {item.status === 'running' ? (
+              {live && status === 'running' ? (
                 <Loader2 size={14} className='animate-spin text-purple-500' />
               ) : (
-                <span className='text-green-500'>✓</span>
+                <span
+                  className={
+                    status === 'failed'
+                      ? 'text-red-500'
+                      : 'text-green-500'
+                  }
+                >
+                  {status === 'failed' ? '✕' : '✓'}
+                </span>
               )}
               <span className='flex-1 whitespace-nowrap'>{label}</span>
               {keyText && (
@@ -500,7 +534,7 @@ export default function AIChatPanel({
 
       // 清除消息并重置为欢迎消息
       console.log('视频上下文变化，清除聊天记录');
-      setToolChain([]);
+      clearToolChain();
       setMessages([{ role: 'assistant', content: welcomeMessage }]);
 
       // 重置加载标记，允许加载新视频的聊天记录
@@ -557,7 +591,7 @@ export default function AIChatPanel({
       (m) => m.role !== 'assistant' || m.content !== welcomeMessage
     );
     if (!isRetry) setInput('');
-    setToolChain([]);
+    clearToolChain();
 
     // 重试时移除原来的用户消息和错误消息，避免历史记录重复。
     setMessages((prev) => [
@@ -565,6 +599,9 @@ export default function AIChatPanel({
       { role: 'user', content: userMessage },
       { role: 'assistant', content: '' },
     ]);
+
+    // 新请求开始时清空本次实时工具链（历史消息里的工具已固化，不影响）
+    clearToolChain();
 
     setIsStreaming(true);
 
@@ -639,16 +676,13 @@ export default function AIChatPanel({
                   if (json.status === 'start') {
                     pushToolChain(json.name, json.args);
                   } else if (json.status === 'done') {
-                    finishToolChain(json.name);
+                    finishToolChain(json.name, {
+                      result: json.result,
+                      ok: json.ok,
+                    });
                   } else if (json.status === 'failed') {
                     // 工具执行失败也标记为完成，但可在链上保留
-                    setToolChain((prev) =>
-                      prev.map((item) =>
-                        item.name === json.name && item.status === 'running'
-                          ? { ...item, status: 'done' }
-                          : item
-                      )
-                    );
+                    finishToolChain(json.name, { result: json.result, ok: false });
                   }
                   continue;
                 }
@@ -711,6 +745,27 @@ export default function AIChatPanel({
           }
         }
 
+        // 流式结束：把本次实时工具链固化到最后一条 assistant 消息，
+        // 使其跨消息持久显示，并随 history 回喂服务端（避免同一会话重复调工具）。
+        const finishedTools = toolChainRef.current.map((t) => ({
+          name: t.name,
+          key: t.key,
+          args: t.args,
+          result: t.result,
+          ok: t.ok,
+        }));
+        if (finishedTools.length) {
+          setMessages((prev) => {
+            const newMessages = [...prev];
+            newMessages[newMessages.length - 1] = {
+              role: 'assistant',
+              content: assistantMessage,
+              toolCalls: finishedTools,
+            };
+            return newMessages;
+          });
+        }
+
         if (streamError) throw new Error(streamError);
         if (!assistantMessage.trim()) {
           throw new Error('AI服务未返回有效内容，请检查 API 密钥和服务配置');
@@ -753,7 +808,8 @@ export default function AIChatPanel({
       });
     } finally {
       setIsStreaming(false);
-      setToolChain([]);
+      // 流式/非流式结束后，实时工具链已固化到消息，这里清空 live 链
+      clearToolChain();
       abortControllerRef.current = null;
     }
   };
@@ -773,7 +829,7 @@ export default function AIChatPanel({
     sessionStorage.removeItem(storageKey);
 
     // 重置消息为欢迎消息
-    setToolChain([]);
+    clearToolChain();
     setMessages([{ role: 'assistant', content: welcomeMessage }]);
 
     console.log('已清空聊天上下文');
@@ -863,10 +919,19 @@ export default function AIChatPanel({
                       </p>
                     ) : (
                       <div className='w-full'>
-                        {/* 流式中的最后一个 assistant 消息：工具链合并显示在气泡内 */}
+                        {/* 历史消息中已固化的工具调用：持续显示 */}
+                        {message.toolCalls && message.toolCalls.length > 0 && (
+                          <div className='mb-2'>
+                            {renderToolChain(
+                              message.toolCalls as ToolChainItem[],
+                              false
+                            )}
+                          </div>
+                        )}
+                        {/* 流式中的最后一个 assistant 消息：实时工具链合并显示在气泡内 */}
                         {isStreaming &&
                           index === messages.length - 1 &&
-                          renderToolChain()}
+                          renderToolChain(toolChain, true)}
                         <div className='prose prose-sm max-w-none dark:prose-invert prose-p:my-2 prose-p:leading-relaxed prose-pre:bg-gray-800 prose-pre:text-gray-100 dark:prose-pre:bg-gray-900 prose-code:text-purple-600 dark:prose-code:text-purple-400 prose-code:bg-purple-50 dark:prose-code:bg-purple-900/20 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none prose-a:text-inherit dark:prose-a:text-inherit prose-a:no-underline hover:prose-a:underline prose-strong:text-gray-900 dark:prose-strong:text-white prose-ul:my-2 prose-ol:my-2 prose-li:my-1'>
                           {renderAssistantContent(message.content)}
                         </div>
@@ -1065,10 +1130,19 @@ export default function AIChatPanel({
                       </p>
                     ) : (
                       <div className='w-full'>
-                        {/* 流式中的最后一个 assistant 消息：工具链合并显示在气泡内 */}
+                        {/* 历史消息中已固化的工具调用：持续显示 */}
+                        {message.toolCalls && message.toolCalls.length > 0 && (
+                          <div className='mb-2'>
+                            {renderToolChain(
+                              message.toolCalls as ToolChainItem[],
+                              false
+                            )}
+                          </div>
+                        )}
+                        {/* 流式中的最后一个 assistant 消息：实时工具链合并显示在气泡内 */}
                         {isStreaming &&
                           index === messages.length - 1 &&
-                          renderToolChain()}
+                          renderToolChain(toolChain, true)}
                         <div className='prose prose-sm max-w-none dark:prose-invert prose-p:my-2 prose-p:leading-relaxed prose-pre:bg-gray-800 prose-pre:text-gray-100 dark:prose-pre:bg-gray-900 prose-code:text-purple-600 dark:prose-code:text-purple-400 prose-code:bg-purple-50 dark:prose-code:bg-purple-900/20 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none prose-a:text-inherit dark:prose-a:text-inherit prose-a:no-underline hover:prose-a:underline prose-strong:text-gray-900 dark:prose-strong:text-white prose-ul:my-2 prose-ol:my-2 prose-li:my-1'>
                           {renderAssistantContent(message.content)}
                         </div>

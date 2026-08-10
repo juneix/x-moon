@@ -82,7 +82,7 @@ interface ProviderAdapter {
   /** 构造首轮 transcript（含 system 提示；claude 的 system 走顶层字段，不入 transcript） */
   buildInitialTranscript(ctx: {
     systemPrompt: string;
-    history: Array<{ role: 'user' | 'assistant'; content: string }>;
+    history: HistoryTurn[];
     message: string;
   }): any[];
   runRound(opts: {
@@ -116,6 +116,29 @@ export interface ToolDataSources {
   };
   /** 当前登录用户（用于查收藏/最近观看等个性化工具） */
   username?: string;
+}
+
+/* ------------------------------------------------------------------ */
+/* 历史回合（前端持久化后随下一条消息回喂）                              */
+/* ------------------------------------------------------------------ */
+
+/** 前端消息历史中的一条；assistant 消息可携带该回合执行过的工具调用（含参数与返回结果）。 */
+export interface HistoryTurn {
+  role: 'user' | 'assistant';
+  content: string;
+  toolCalls?: Array<{
+    name: string;
+    key?: string;
+    args?: any;
+    result?: string;
+    ok?: boolean;
+  }>;
+}
+
+/** 为回喂重建工具消息生成全局唯一 id（assistant tool_calls / tool_use 需与结果消息精确对应） */
+let replayToolIdSeq = 0;
+function nextReplayToolId(): string {
+  return `replay_${replayToolIdSeq++}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -292,7 +315,8 @@ export function buildAgentSystemPrompt(opts: {
 5. 工具调用之间不要输出冗长说明，简短过渡即可。
 6. 用中文回复用户。
 7. 参考工具返回的数据回答；数据不足时诚实告知用户。
-8. 回答格式清晰：使用分段、列表让内容易读。`;
+8. 回答格式清晰：使用分段、列表让内容易读。
+9. 单次响应中 web_search 最多调用 5 次，fetch_page 最多调用 5 次。优先基于已获取的搜索结果与历史数据回答；已有足够信息时，不要再次联网搜索或抓取网页。执行 web_search 前，请先仔细斟酌搜索词：选择能精准命中目标信息的关键词（考虑片名中英文、上映年份、类型、平台等限定词），避免宽泛或歧义的词，一次到位，减少无效搜索。`;
 
   if (opts.context?.title) {
     p += `\n\n## 【当前视频上下文】\n用户正在浏览: ${opts.context.title}`;
@@ -617,11 +641,38 @@ const openaiCompletionsAdapter: ProviderAdapter = {
   },
 
   buildInitialTranscript({ systemPrompt, history, message }) {
-    return [
-      { role: 'system', content: systemPrompt },
-      ...history,
-      { role: 'user', content: message },
-    ];
+    const transcript: any[] = [{ role: 'system', content: systemPrompt }];
+    for (const h of history) {
+      if (h.role === 'user') {
+        transcript.push({ role: 'user', content: h.content });
+        continue;
+      }
+      if (h.toolCalls?.length) {
+        // 重建历史工具回合：assistant(tool_calls) → tool(结果) → assistant(最终回答)，
+        // 让模型直接复用此前拿到的数据，避免同一会话重复调用工具。
+        const toolCalls = h.toolCalls.map((tc) => ({
+          id: nextReplayToolId(),
+          type: 'function',
+          function: {
+            name: tc.name,
+            arguments: JSON.stringify(tc.args ?? (tc.key ? { query: tc.key } : {})),
+          },
+        }));
+        transcript.push({ role: 'assistant', content: '', tool_calls: toolCalls });
+        h.toolCalls.forEach((tc, i) => {
+          transcript.push({
+            role: 'tool',
+            tool_call_id: toolCalls[i].id,
+            content: tc.ok === false ? `(工具执行失败) ${tc.result ?? ''}` : (tc.result ?? ''),
+          });
+        });
+        if (h.content) transcript.push({ role: 'assistant', content: h.content });
+      } else if (h.content) {
+        transcript.push({ role: 'assistant', content: h.content });
+      }
+    }
+    transcript.push({ role: 'user', content: message });
+    return transcript;
   },
 
   async runRound(opts) {
@@ -814,7 +865,36 @@ const openaiResponsesAdapter: ProviderAdapter = {
 
   buildInitialTranscript({ history, message }) {
     // system 走顶层 instructions，不入 input
-    return [...history, { role: 'user', content: message }];
+    const input: any[] = [];
+    for (const h of history) {
+      if (h.role === 'user') {
+        input.push({ role: 'user', content: [{ type: 'input_text', text: h.content }] });
+        continue;
+      }
+      if (h.toolCalls?.length) {
+        const calls = h.toolCalls.map((tc) => ({
+          type: 'function_call',
+          call_id: nextReplayToolId(),
+          name: tc.name,
+          arguments: JSON.stringify(tc.args ?? (tc.key ? { query: tc.key } : {})),
+        }));
+        input.push(...calls);
+        h.toolCalls.forEach((tc, i) => {
+          input.push({
+            type: 'function_call_output',
+            call_id: calls[i].call_id,
+            output: tc.result ?? '',
+          });
+        });
+        if (h.content) {
+          input.push({ role: 'assistant', content: [{ type: 'output_text', text: h.content }] });
+        }
+      } else if (h.content) {
+        input.push({ role: 'assistant', content: [{ type: 'output_text', text: h.content }] });
+      }
+    }
+    input.push({ role: 'user', content: [{ type: 'input_text', text: message }] });
+    return input;
   },
 
   async runRound(opts) {
@@ -996,21 +1076,63 @@ const claudeAdapter: ProviderAdapter = {
   name: 'claude',
 
   buildTools(defs) {
-    return defs.map((d) => ({
+    return defs.map((d, i) => ({
       name: d.name,
       description: d.description,
       input_schema: { ...d.parameters, additionalProperties: false },
+      // 在最后一个工具上打缓存断点：配合 system 断点，让 system+tools 前缀
+      // 在 agent 多轮循环中命中 Anthropic prompt caching。
+      ...(i === defs.length - 1 ? { cache_control: { type: 'ephemeral' as const } } : {}),
     }));
   },
 
   buildInitialTranscript({ history, message }) {
-    return [...history, { role: 'user', content: message }];
+    const transcript: any[] = [];
+    for (const h of history) {
+      if (h.role === 'user') {
+        transcript.push({ role: 'user', content: h.content });
+        continue;
+      }
+      if (h.toolCalls?.length) {
+        // 重建历史工具回合：assistant(tool_use) → user(tool_result) → assistant(最终回答)，
+        // Claude 要求角色严格交替，因此把最终回答单独作为一条 assistant 消息。
+        const toolUses = h.toolCalls.map((tc) => ({
+          type: 'tool_use',
+          id: nextReplayToolId(),
+          name: tc.name,
+          input: tc.args ?? {},
+        }));
+        transcript.push({ role: 'assistant', content: toolUses });
+        transcript.push({
+          role: 'user',
+          content: h.toolCalls.map((tc, i) => ({
+            type: 'tool_result',
+            tool_use_id: toolUses[i].id,
+            content: tc.result ?? '',
+            ...(tc.ok === false ? { is_error: true } : {}),
+          })),
+        });
+        if (h.content) transcript.push({ role: 'assistant', content: h.content });
+      } else if (h.content) {
+        transcript.push({ role: 'assistant', content: h.content });
+      }
+    }
+    transcript.push({ role: 'user', content: message });
+    return transcript;
   },
 
   async runRound(opts) {
     const body: any = {
       model: opts.model,
-      system: opts.systemPromptForRun || '',
+      // Anthropic 要求 system 为数组才能挂 cache_control 断点。
+      // 在 system 末尾断点：system+tools 前缀跨轮命中 prompt cache。
+      system: [
+        {
+          type: 'text',
+          text: opts.systemPromptForRun || '',
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
       messages: opts.transcript,
       tools: opts.tools,
       max_tokens: opts.maxTokens,
@@ -1200,7 +1322,7 @@ export interface RunToolAgentOptions {
   temperature: number;
   streaming: boolean;
   systemPrompt: string;
-  history: Array<{ role: 'user' | 'assistant'; content: string }>;
+  history: HistoryTurn[];
   message: string;
   tools: AgentToolDef[];
   dataSources: ToolDataSources;
@@ -1291,7 +1413,16 @@ export async function runToolAgent(opts: RunToolAgentOptions): Promise<RunToolAg
           const results = await Promise.all(
             round.toolCalls.map(async (tc) => {
               const result = await dispatchTool(tc.name, tc.args, opts.dataSources);
-              send(JSON.stringify({ type: 'tool', name: tc.name, status: 'done' }));
+              send(
+                JSON.stringify({
+                  type: 'tool',
+                  name: tc.name,
+                  status: 'done',
+                  // 携带执行结果，供前端在响应结束后将工具调用固化进消息历史
+                  result: result.text,
+                  ok: result.ok,
+                })
+              );
               return result;
             })
           );

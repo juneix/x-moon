@@ -9,6 +9,7 @@ import {
 import {
   buildAgentSystemPrompt,
   buildAgentTools,
+  HistoryTurn,
   NewProtocol,
   runToolAgent,
   ToolDataSources,
@@ -32,7 +33,7 @@ interface ChatMessage {
 interface ChatRequest {
   message: string;
   context?: VideoContext;
-  history?: ChatMessage[];
+  history?: HistoryTurn[];
 }
 
 /**
@@ -405,7 +406,7 @@ export async function POST(request: NextRequest) {
 
     console.log('🎯 数据协调完成, systemPrompt长度:', orchestrationResult.systemPrompt.length);
 
-    // 5. 构建消息列表
+    // 5. 构建消息列表（旧模式无工具式调用，历史需剥离 toolCalls 字段）
     const systemPrompt = aiConfig.SystemPrompt
       ? `${aiConfig.SystemPrompt}\n\n${orchestrationResult.systemPrompt}`
       : orchestrationResult.systemPrompt;
@@ -413,7 +414,7 @@ export async function POST(request: NextRequest) {
     const messages: ChatMessage[] = [
       { role: 'user', content: systemPrompt },
       { role: 'assistant', content: '明白了，我会按照要求回答用户的问题。' },
-      ...history,
+      ...history.map((h) => ({ role: h.role, content: h.content })),
       { role: 'user', content: message },
     ];
 
