@@ -74,6 +74,8 @@ interface RoundResult {
   assistantSegments: any[];
   /** 本轮请求的工具调用（空 = 模型已结束） */
   toolCalls: ToolCall[];
+  /** 本轮请求的输入 token 数（API 返回的真实用量，未返回则缺省） */
+  usage?: { promptTokens?: number };
 }
 
 interface ProviderAdapter {
@@ -133,6 +135,8 @@ export interface HistoryTurn {
     result?: string;
     ok?: boolean;
   }>;
+  /** 较早对话被压缩后写回的摘要（含前缀的完整正文，可多条）；存在时不重建工具详情 */
+  compressedSummaries?: string[];
 }
 
 /** 为回喂重建工具消息生成全局唯一 id（assistant tool_calls / tool_use 需与结果消息精确对应） */
@@ -647,7 +651,13 @@ const openaiCompletionsAdapter: ProviderAdapter = {
         transcript.push({ role: 'user', content: h.content });
         continue;
       }
-      if (h.toolCalls?.length) {
+      if (h.compressedSummaries?.length) {
+        // 压缩摘要：重建为 user 摘要消息（工具详情已在压缩时移除）
+        for (const s of h.compressedSummaries) {
+          transcript.push({ role: 'user', content: s });
+        }
+        if (h.content) transcript.push({ role: 'assistant', content: h.content });
+      } else if (h.toolCalls?.length) {
         // 重建历史工具回合：assistant(tool_calls) → tool(结果) → assistant(最终回答)，
         // 让模型直接复用此前拿到的数据，避免同一会话重复调用工具。
         const toolCalls = h.toolCalls.map((tc) => ({
@@ -716,7 +726,15 @@ const openaiCompletionsAdapter: ProviderAdapter = {
       const segments = toolCalls.length
         ? [{ role: 'assistant', content, tool_calls: rawToolCalls }]
         : [{ role: 'assistant', content }];
-      return { assistantText: content, assistantSegments: segments, toolCalls };
+      return {
+        assistantText: content,
+        assistantSegments: segments,
+        toolCalls,
+        usage:
+          typeof data.usage?.prompt_tokens === 'number'
+            ? { promptTokens: data.usage.prompt_tokens }
+            : undefined,
+      };
     }
 
     // 流式解析
@@ -724,6 +742,7 @@ const openaiCompletionsAdapter: ProviderAdapter = {
     const decoder = new TextDecoder();
     let buffer = '';
     let content = '';
+    let streamUsage: number | undefined;
     // key: tool index；value: { id, name, rawArgs }
     const toolAcc: Record<number, { id: string; name: string; rawArgs: string }> = {};
     const emittedToolStart = new Set<number>();
@@ -748,6 +767,10 @@ const openaiCompletionsAdapter: ProviderAdapter = {
           const choice = json.choices?.[0];
           const delta = choice?.delta;
 
+          // 部分网关（含 DeepSeek）会在末块返回 usage，捕获真实 prompt tokens
+          if (json.usage && typeof json.usage.prompt_tokens === 'number') {
+            streamUsage = json.usage.prompt_tokens;
+          }
           if (delta?.reasoning_content) continue; // 跳过 DeepSeek 风格推理内容
           if (delta?.content) {
             content += delta.content;
@@ -803,7 +826,15 @@ const openaiCompletionsAdapter: ProviderAdapter = {
     const segments = toolCalls.length
       ? [{ role: 'assistant', content, tool_calls: rawToolCalls }]
       : [{ role: 'assistant', content }];
-    return { assistantText: content, assistantSegments: segments, toolCalls };
+    return {
+      assistantText: content,
+      assistantSegments: segments,
+      toolCalls,
+      usage:
+        typeof streamUsage === 'number'
+          ? { promptTokens: streamUsage }
+          : undefined,
+    };
   },
 
   buildToolResultMessages(toolCalls, results) {
@@ -871,7 +902,15 @@ const openaiResponsesAdapter: ProviderAdapter = {
         input.push({ role: 'user', content: [{ type: 'input_text', text: h.content }] });
         continue;
       }
-      if (h.toolCalls?.length) {
+      if (h.compressedSummaries?.length) {
+        // 压缩摘要：重建为 user 摘要消息（工具详情已在压缩时移除）
+        for (const s of h.compressedSummaries) {
+          input.push({ role: 'user', content: [{ type: 'input_text', text: s }] });
+        }
+        if (h.content) {
+          input.push({ role: 'assistant', content: [{ type: 'output_text', text: h.content }] });
+        }
+      } else if (h.toolCalls?.length) {
         const calls = h.toolCalls.map((tc) => ({
           type: 'function_call',
           call_id: nextReplayToolId(),
@@ -928,7 +967,13 @@ const openaiResponsesAdapter: ProviderAdapter = {
     if (!opts.streaming) {
       const data = await res.json();
       if (data.status === 'failed') throw new Error('OpenAI Responses API failed');
-      return parseResponsesOutput(data.output);
+      return {
+        ...parseResponsesOutput(data.output),
+        usage:
+          typeof data.usage?.input_tokens === 'number'
+            ? { promptTokens: data.usage.input_tokens }
+            : undefined,
+      };
     }
 
     // 流式解析
@@ -939,6 +984,7 @@ const openaiResponsesAdapter: ProviderAdapter = {
     const toolAcc: Record<string, { id: string; name: string; rawArgs: string }> = {};
     const emittedToolStart = new Set<string>();
     let completedOutput: any[] | null = null;
+    let streamUsage: number | undefined;
 
     while (true) {
       if (opts.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -996,6 +1042,9 @@ const openaiResponsesAdapter: ProviderAdapter = {
             }
           } else if (type === 'response.completed') {
             completedOutput = json.response?.output || null;
+            if (typeof json.response?.usage?.input_tokens === 'number') {
+              streamUsage = json.response.usage.input_tokens;
+            }
           } else if (type === 'response.failed') {
             throw new Error('OpenAI Responses API stream failed');
           }
@@ -1025,7 +1074,13 @@ const openaiResponsesAdapter: ProviderAdapter = {
           arguments: hasArguments ? item.arguments : accumulated.rawArgs || item.arguments || '{}',
         };
       });
-      return parseResponsesOutput(mergedOutput);
+      return {
+        ...parseResponsesOutput(mergedOutput),
+        usage:
+          typeof streamUsage === 'number'
+            ? { promptTokens: streamUsage }
+            : undefined,
+      };
     }
 
     // 兜底：用累积的 delta 构造（不理想但可用）
@@ -1042,7 +1097,15 @@ const openaiResponsesAdapter: ProviderAdapter = {
       args: parseToolArgs(tc.arguments, tc.name || 'unknown'),
     }));
     const assistantSegments = toolCalls.length ? rawToolCalls : [];
-    return { assistantText: '', assistantSegments, toolCalls };
+    return {
+      assistantText: '',
+      assistantSegments,
+      toolCalls,
+      usage:
+        typeof streamUsage === 'number'
+          ? { promptTokens: streamUsage }
+          : undefined,
+    };
   },
 
   buildToolResultMessages(toolCalls, results) {
@@ -1093,7 +1156,13 @@ const claudeAdapter: ProviderAdapter = {
         transcript.push({ role: 'user', content: h.content });
         continue;
       }
-      if (h.toolCalls?.length) {
+      if (h.compressedSummaries?.length) {
+        // 压缩摘要：重建为 user 摘要消息（工具详情已在压缩时移除）
+        for (const s of h.compressedSummaries) {
+          transcript.push({ role: 'user', content: s });
+        }
+        if (h.content) transcript.push({ role: 'assistant', content: h.content });
+      } else if (h.toolCalls?.length) {
         // 重建历史工具回合：assistant(tool_use) → user(tool_result) → assistant(最终回答)，
         // Claude 要求角色严格交替，因此把最终回答单独作为一条 assistant 消息。
         const toolUses = h.toolCalls.map((tc) => ({
@@ -1161,7 +1230,13 @@ const claudeAdapter: ProviderAdapter = {
 
     if (!opts.streaming) {
       const data = await res.json();
-      return parseClaudeContent(data.content, data.stop_reason);
+      return {
+        ...parseClaudeContent(data.content, data.stop_reason),
+        usage:
+          typeof data.usage?.input_tokens === 'number'
+            ? { promptTokens: data.usage.input_tokens }
+            : undefined,
+      };
     }
 
     // 流式解析
@@ -1172,6 +1247,7 @@ const claudeAdapter: ProviderAdapter = {
     // key: block index；value: tool_use 块
     const toolBlocks: Record<number, { id: string; name: string; rawInput: string }> = {};
     const emittedToolStart = new Set<number>();
+    let streamUsage: number | undefined;
 
     while (true) {
       if (opts.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -1204,6 +1280,10 @@ const claudeAdapter: ProviderAdapter = {
                 emittedToolStart.add(json.index);
                 opts.onToolStart(block.name);
               }
+            }
+          } else if (json.type === 'message_delta') {
+            if (typeof json.usage?.input_tokens === 'number') {
+              streamUsage = json.usage.input_tokens;
             }
           } else if (json.type === 'content_block_delta') {
             const delta = json.delta;
@@ -1239,7 +1319,13 @@ const claudeAdapter: ProviderAdapter = {
       }
     }
 
-    return buildClaudeRoundResult(text, toolBlocks);
+    return {
+      ...buildClaudeRoundResult(text, toolBlocks),
+      usage:
+        typeof streamUsage === 'number'
+          ? { promptTokens: streamUsage }
+          : undefined,
+    };
   },
 
   buildToolResultMessages(toolCalls, results) {
@@ -1298,6 +1384,231 @@ function buildClaudeRoundResult(text: string, toolBlocks: Record<number, { id: s
 }
 
 /* ------------------------------------------------------------------ */
+/* 上下文压缩（LLM 摘要化 + 丢弃所有工具消息）                          */
+/* ------------------------------------------------------------------ */
+
+/** 约 4 字符 ≈ 1 token 的粗略估算（项目无 tokenizer 依赖） */
+function estimateTokens(value: any): number {
+  return Math.ceil(JSON.stringify(value ?? '').length / 4);
+}
+
+/** 摘要专用系统指令 */
+const SUMMARY_SYSTEM_PROMPT =
+  '你是一个对话压缩工具。用户会给你一段 AI 助手使用工具（联网搜索、豆瓣、TMDB、网页抓取、查收藏等）与用户多轮对话的原始记录。' +
+  '请把它压缩成简洁的中文摘要，保留：用户的核心诉求、助手查到的关键事实（片名、评分、上映时间、来源链接、关键结论等）。' +
+  '工具调用的详细原始返回可以省略，但关键数字与结论必须保留。直接输出摘要正文，不要客套，不超过300字。';
+
+/** 判断某个 transcript 元素是否属于"工具消息"（压缩时整体移除） */
+function isToolElement(el: any, protocol: NewProtocol): boolean {
+  if (!el || typeof el !== 'object') return false;
+  if (protocol === 'openai-responses') {
+    return el.type === 'function_call' || el.type === 'function_call_output';
+  }
+  if (protocol === 'claude') {
+    const content: any[] = Array.isArray(el.content) ? el.content : [];
+    if (el.role === 'assistant' && content.some((b) => b?.type === 'tool_use')) return true;
+    if (el.role === 'user' && content.some((b) => b?.type === 'tool_result')) return true;
+    return false;
+  }
+  // openai-completions
+  if (el.role === 'tool') return true;
+  if (el.role === 'assistant' && Array.isArray(el.tool_calls) && el.tool_calls.length) return true;
+  return false;
+}
+
+/** 把一个工具元素转成可读文本（供摘要 LLM 阅读） */
+function toolElementToText(el: any, protocol: NewProtocol): string {
+  const lines: string[] = [];
+  if (protocol === 'openai-responses') {
+    if (el.type === 'function_call') {
+      lines.push(`助手调用工具: ${el.name || ''}(${el.arguments || '{}'})`);
+    } else if (el.type === 'function_call_output') {
+      lines.push(`工具结果: ${String(el.output ?? '').slice(0, 4000)}`);
+    }
+    return lines.join('\n');
+  }
+  if (protocol === 'claude') {
+    const content: any[] = Array.isArray(el.content) ? el.content : [];
+    if (el.role === 'assistant') {
+      const tools = content.filter((b) => b?.type === 'tool_use');
+      const text = content
+        .filter((b) => b?.type === 'text')
+        .map((b) => b.text)
+        .join('');
+      if (tools.length) {
+        lines.push(
+          `助手调用工具: ${tools
+            .map((b) => `${b.name}(${JSON.stringify(b.input ?? {})})`)
+            .join('; ')}`
+        );
+      }
+      if (text) lines.push(`助手: ${text}`);
+    } else if (el.role === 'user') {
+      const results = content
+        .filter((b) => b?.type === 'tool_result')
+        .map((b) => (typeof b.content === 'string' ? b.content : JSON.stringify(b.content ?? '')))
+        .join('\n');
+      if (results) lines.push(`工具结果: ${results.slice(0, 4000)}`);
+    }
+    return lines.join('\n');
+  }
+  // openai-completions
+  if (el.role === 'tool') {
+    return `工具结果: ${String(el.content ?? '').slice(0, 4000)}`;
+  }
+  if (el.role === 'assistant' && Array.isArray(el.tool_calls)) {
+    const calls = el.tool_calls
+      .map((tc: any) => `${tc.function?.name || ''}(${tc.function?.arguments || '{}'})`)
+      .join('; ');
+    lines.push(`助手调用工具: ${calls}`);
+    if (el.content) lines.push(`助手: ${el.content}`);
+  }
+  return lines.join('\n');
+}
+
+/** 构造摘要消息（写入 transcript，格式随协议） */
+function buildSummaryMessage(protocol: NewProtocol, summary: string): any {
+  const content = `【以下为较早对话的工具调用摘要】\n${summary}`;
+  if (protocol === 'openai-responses') {
+    return { role: 'user', content: [{ type: 'input_text', text: content }] };
+  }
+  return { role: 'user', content };
+}
+
+/** 调用同 provider 做一次非流式摘要 */
+async function summarizeWithProvider(
+  providerOpts: {
+    protocol: NewProtocol;
+    apiKey: string;
+    baseURL: string;
+    model: string;
+    signal?: AbortSignal;
+  },
+  rawText: string
+): Promise<string> {
+  const summaryMaxTokens = 1024;
+  if (providerOpts.protocol === 'openai-responses') {
+    const res = await fetch(buildProtocolUrl(providerOpts.baseURL, 'responses'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${providerOpts.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: providerOpts.model,
+        instructions: SUMMARY_SYSTEM_PROMPT,
+        input: [{ role: 'user', content: [{ type: 'input_text', text: rawText }] }],
+        max_output_tokens: summaryMaxTokens,
+        temperature: 0.3,
+        stream: false,
+      }),
+      signal: providerOpts.signal,
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`Summary Responses error: ${res.status} ${errText.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    return parseResponsesOutput(data.output || []).assistantText;
+  }
+  if (providerOpts.protocol === 'claude') {
+    const res = await fetch(buildProtocolUrl(providerOpts.baseURL, 'messages'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': providerOpts.apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: providerOpts.model,
+        system: SUMMARY_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: rawText }],
+        max_tokens: summaryMaxTokens,
+        stream: false,
+      }),
+      signal: providerOpts.signal,
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      throw new Error(`Summary Claude error: ${res.status} ${errText.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    return parseClaudeContent(data.content || []).assistantText;
+  }
+  // openai-completions
+  const res = await fetch(buildProtocolUrl(providerOpts.baseURL, 'chat/completions'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${providerOpts.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: providerOpts.model,
+      messages: [
+        { role: 'system', content: SUMMARY_SYSTEM_PROMPT },
+        { role: 'user', content: rawText },
+      ],
+      max_tokens: summaryMaxTokens,
+      temperature: 0.3,
+      stream: false,
+    }),
+    signal: providerOpts.signal,
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Summary OpenAI error: ${res.status} ${errText.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '';
+}
+
+/**
+ * 上下文超限时压缩：把 transcript 中所有工具消息序列化后交给 LLM 摘要，
+ * 摘要写回为一条 user 消息，然后丢弃所有工具消息（AI 需要时可重新调工具）。
+ * 摘要失败时降级为直接丢弃工具消息（仅保留占位），保证主请求不失败。
+ * summarize=false 时跳过 LLM 直接丢弃（循环内已压过一次、又再次超限的兜底）。
+ */
+async function compressTranscript(
+  transcript: any[],
+  protocol: NewProtocol,
+  providerOpts: {
+    protocol: NewProtocol;
+    apiKey: string;
+    baseURL: string;
+    model: string;
+    signal?: AbortSignal;
+  },
+  ctx: { transcriptTokens: number; compressed: boolean },
+  summarize = true
+): Promise<{ summary: string; fallback: boolean }> {
+  const toolElements = transcript.filter((el) => isToolElement(el, protocol));
+  if (toolElements.length === 0) return { summary: '', fallback: false };
+  const kept = transcript.filter((el) => !isToolElement(el, protocol));
+
+  let summary = '';
+  if (summarize) {
+    const rawText = toolElements.map((el) => toolElementToText(el, protocol)).join('\n');
+    try {
+      summary = await summarizeWithProvider(providerOpts, rawText);
+    } catch (e) {
+      console.error('❌ 上下文摘要失败，降级为直接丢弃工具消息:', e);
+    }
+  }
+  summary = (summary || '').trim();
+
+  const fallback = !summary;
+  const summaryMsg = buildSummaryMessage(protocol, summary || '（较早对话中的工具调用详情已省略；如需可重新调用工具获取。）');
+  // 摘要插入到末尾（当前 user 消息）之前
+  const insertAt = Math.max(0, kept.length - 1);
+  kept.splice(insertAt, 0, summaryMsg);
+
+  transcript.length = 0;
+  transcript.push(...kept);
+  ctx.transcriptTokens = estimateTokens(transcript);
+  return { summary, fallback };
+}
+
+/* ------------------------------------------------------------------ */
 /* 适配器选择 + 引擎主循环                                             */
 /* ------------------------------------------------------------------ */
 
@@ -1327,11 +1638,15 @@ export interface RunToolAgentOptions {
   tools: AgentToolDef[];
   dataSources: ToolDataSources;
   signal?: AbortSignal;
+  /** 上下文窗口 token 上限，默认 131072（128k） */
+  maxContext?: number;
+  /** 上下文压缩触发阈值百分比（0-100），默认 90；0=关闭 */
+  compressThreshold?: number;
 }
 
 export type RunToolAgentResult =
   | { kind: 'stream'; stream: ReadableStream<Uint8Array> }
-  | { kind: 'json'; content: string };
+  | { kind: 'json'; content: string; compressedSummary?: string };
 
 /**
  * 运行工具式 agent 循环。
@@ -1354,9 +1669,54 @@ export async function runToolAgent(opts: RunToolAgentOptions): Promise<RunToolAg
     systemPromptForRun: opts.systemPrompt,
   } as any;
 
+  // 上下文预算：system + tools 是常量计入窗口。
+  // 以 API 返回的真实 prompt tokens 为基准（上一轮），本轮新 push 用增量估算叠加；
+  // API 未返回 usage（部分网关）时退化为整体估算。
+  const maxContext = opts.maxContext ?? 131072;
+  const compressThreshold = opts.compressThreshold ?? 90;
+  const budgetEnabled = compressThreshold > 0 && compressThreshold <= 100 && maxContext > 0;
+  const baseTokens = budgetEnabled
+    ? estimateTokens(opts.systemPrompt) + estimateTokens(adapter.buildTools(opts.tools))
+    : 0;
+  const budgetTokens = budgetEnabled
+    ? Math.floor((maxContext * compressThreshold) / 100) - baseTokens
+    : Number.POSITIVE_INFINITY;
+  const ctx = {
+    transcriptTokens: estimateTokens(transcript),
+    compressed: false,
+  };
+  const providerOpts = {
+    protocol: opts.protocol,
+    apiKey: opts.apiKey,
+    baseURL: opts.baseURL,
+    model: opts.model,
+    signal: opts.signal,
+  };
+  // 本次 agent 循环最后一次成功压缩的摘要（流式转 SSE、非流式随 JSON 返回）
+  let lastCompression: string | null = null;
+  const enforce = async () => {
+    if (!budgetEnabled) return;
+    if (ctx.transcriptTokens <= budgetTokens) return;
+    // 首次超限调 LLM 摘要；同一次循环内若再次超限，纯丢弃兜底（避免反复调用摘要）
+    const result = await compressTranscript(transcript, adapter.name, providerOpts, ctx, !ctx.compressed);
+    ctx.compressed = true;
+    // 摘要成功（未降级）时记录，流式转 SSE、非流式随 JSON 返回给前端持久化
+    if (result.summary && !result.fallback) {
+      lastCompression = result.summary;
+    }
+  };
+  // 拿到 API 返回的真实 prompt tokens 时，校准计数基准
+  const syncUsage = (round: RoundResult) => {
+    if (typeof round.usage?.promptTokens === 'number') {
+      const delta = estimateTokens(transcript) - round.usage.promptTokens;
+      ctx.transcriptTokens = round.usage.promptTokens + Math.max(0, delta);
+    }
+  };
+
   if (!opts.streaming) {
     let allText = '';
     while (true) {
+      await enforce();
       const round = await adapter.runRound({
         ...runOptsBase,
         transcript,
@@ -1365,14 +1725,23 @@ export async function runToolAgent(opts: RunToolAgentOptions): Promise<RunToolAg
         onToolStart: () => {},
       });
       transcript.push(...round.assistantSegments);
+      ctx.transcriptTokens += estimateTokens(round.assistantSegments);
       allText += round.assistantText;
       if (round.toolCalls.length === 0) break;
       const results = await Promise.all(
         round.toolCalls.map((tc) => dispatchTool(tc.name, tc.args, opts.dataSources))
       );
-      transcript.push(...adapter.buildToolResultMessages(round.toolCalls, results));
+      const resultMsgs = adapter.buildToolResultMessages(round.toolCalls, results);
+      transcript.push(...resultMsgs);
+      ctx.transcriptTokens += estimateTokens(resultMsgs);
+      // 本轮请求已返回真实用量：校准基准（下一轮 enforce 用更准的值判断）
+      syncUsage(round);
     }
-    return { kind: 'json', content: allText };
+    return {
+      kind: 'json',
+      content: allText,
+      ...(lastCompression ? { compressedSummary: lastCompression } : {}),
+    };
   }
 
   // 流式：包装成 SSE
@@ -1386,6 +1755,7 @@ export async function runToolAgent(opts: RunToolAgentOptions): Promise<RunToolAg
 
       try {
         while (true) {
+          await enforce();
           const round = await adapter.runRound({
             ...runOptsBase,
             transcript,
@@ -1397,6 +1767,7 @@ export async function runToolAgent(opts: RunToolAgentOptions): Promise<RunToolAg
             onToolStart: () => {},
           });
           transcript.push(...round.assistantSegments);
+          ctx.transcriptTokens += estimateTokens(round.assistantSegments);
           if (round.toolCalls.length === 0) break;
 
           // 整轮解析完成后：先逐个发 start（携带关键参数），再并发执行工具，执行完逐个发 done
@@ -1426,7 +1797,14 @@ export async function runToolAgent(opts: RunToolAgentOptions): Promise<RunToolAg
               return result;
             })
           );
-          transcript.push(...adapter.buildToolResultMessages(round.toolCalls, results));
+          const resultMsgs = adapter.buildToolResultMessages(round.toolCalls, results);
+          transcript.push(...resultMsgs);
+          ctx.transcriptTokens += estimateTokens(resultMsgs);
+          syncUsage(round);
+        }
+        // 压缩发生在本轮循环内：把摘要随 SSE 发给前端，前端持久化后下次请求不再膨胀
+        if (lastCompression) {
+          send(JSON.stringify({ type: 'context_compressed', summary: lastCompression }));
         }
         send('[DONE]');
       } catch (error) {

@@ -24,6 +24,8 @@ interface ChatMessage {
     result?: string;
     ok?: boolean;
   }>;
+  /** 较早对话被压缩后写回的摘要正文；存在时替换 toolCalls 随 history 回喂（避免下次请求上下文重新膨胀） */
+  compressedSummaries?: string[];
 }
 
 /** 工具链中的一个工具调用 */
@@ -274,6 +276,8 @@ export default function AIChatPanel({
   const prevStorageKeyRef = useRef<string>(storageKey);
   const abortControllerRef = useRef<AbortController | null>(null);
   const hasLoadedRef = useRef(false);
+  /** 本次请求服务端上下文压缩产生的摘要，流式结束后随本消息固化回喂 */
+  const compressionSummariesRef = useRef<string[]>([]);
 
   // 工具名称 → 展示文案
   const TOOL_LABELS: Record<string, string> = {
@@ -592,6 +596,7 @@ export default function AIChatPanel({
     );
     if (!isRetry) setInput('');
     clearToolChain();
+    compressionSummariesRef.current = [];
 
     // 重试时移除原来的用户消息和错误消息，避免历史记录重复。
     setMessages((prev) => [
@@ -726,17 +731,22 @@ export default function AIChatPanel({
                   streamError = String(json.error);
                 }
 
-                const text = json.text || '';
-                if (text) {
-                  assistantMessage += text;
-                  setMessages((prev) => {
-                    const newMessages = [...prev];
-                    newMessages[newMessages.length - 1] = {
-                      role: 'assistant',
-                      content: assistantMessage,
-                    };
-                    return newMessages;
-                  });
+                // 上下文压缩事件：摘要存入 ref，待流式结束后随本消息固化回喂
+                if (json.type === 'context_compressed' && json.summary) {
+                  compressionSummariesRef.current.push(`【较早对话已压缩】\n${json.summary}`);
+                } else {
+                  const text = json.text || '';
+                  if (text) {
+                    assistantMessage += text;
+                    setMessages((prev) => {
+                      const newMessages = [...prev];
+                      newMessages[newMessages.length - 1] = {
+                        role: 'assistant',
+                        content: assistantMessage,
+                      };
+                      return newMessages;
+                    });
+                  }
                 }
               } catch (e) {
                 console.error('解析最终缓冲区数据失败:', e);
@@ -754,13 +764,16 @@ export default function AIChatPanel({
           result: t.result,
           ok: t.ok,
         }));
-        if (finishedTools.length) {
+        if (finishedTools.length || compressionSummariesRef.current.length) {
           setMessages((prev) => {
             const newMessages = [...prev];
             newMessages[newMessages.length - 1] = {
               role: 'assistant',
               content: assistantMessage,
-              toolCalls: finishedTools,
+              ...(finishedTools.length ? { toolCalls: finishedTools } : {}),
+              ...(compressionSummariesRef.current.length
+                ? { compressedSummaries: compressionSummariesRef.current }
+                : {}),
             };
             return newMessages;
           });
@@ -779,9 +792,21 @@ export default function AIChatPanel({
         // 更新最后一条消息为完整响应
         setMessages((prev) => {
           const newMessages = [...prev];
+          // 非流式压缩发生在本轮循环内，摘要随 JSON 返回
+          const compressed = data.compressedSummary
+            ? `【较早对话已压缩】\n${data.compressedSummary}`
+            : undefined;
           newMessages[newMessages.length - 1] = {
             role: 'assistant',
             content: content,
+            ...(compressed
+              ? {
+                  compressedSummaries: [
+                    ...((prev[prev.length - 1] as ChatMessage)?.compressedSummaries || []),
+                    compressed,
+                  ],
+                }
+              : {}),
           };
           return newMessages;
         });

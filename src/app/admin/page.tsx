@@ -15708,6 +15708,10 @@ const AIConfigComponent = ({
   const [claudeBaseURL, setClaudeBaseURL] = useState('');
   const [claudeModel, setClaudeModel] = useState('');
 
+  // 新版上下文压缩配置
+  const [maxContext, setMaxContext] = useState(131072);
+  const [compressThreshold, setCompressThreshold] = useState(90);
+
   // 功能开关
   const [enableHomepageEntry, setEnableHomepageEntry] = useState(true);
   const [enableVideoCardEntry, setEnableVideoCardEntry] = useState(true);
@@ -15745,6 +15749,8 @@ const AIConfigComponent = ({
       setClaudeApiKey(config.AIConfig.ClaudeApiKey || '');
       setClaudeBaseURL(config.AIConfig.ClaudeBaseURL || '');
       setClaudeModel(config.AIConfig.ClaudeModel || '');
+      setMaxContext(config.AIConfig.MaxContext ?? 131072);
+      setCompressThreshold(config.AIConfig.CompressThreshold ?? 90);
       setEnableHomepageEntry(config.AIConfig.EnableHomepageEntry !== false);
       setEnableVideoCardEntry(config.AIConfig.EnableVideoCardEntry !== false);
       setEnablePlayPageEntry(config.AIConfig.EnablePlayPageEntry !== false);
@@ -15780,6 +15786,8 @@ const AIConfigComponent = ({
             SerpApiKey: serpApiKey,
             EnableNewMode: enableNewMode,
             NewProtocol: newProtocol,
+            MaxContext: maxContext,
+            CompressThreshold: compressThreshold,
             OpenAIApiKey: openaiApiKey,
             OpenAIBaseURL: openaiBaseURL,
             OpenAIModel: openaiModel,
@@ -16036,6 +16044,41 @@ const AIConfigComponent = ({
             <option value='openai-responses'>OpenAI Response 协议 (/responses)</option>
             <option value='claude'>Claude Messages 协议 (/v1/messages)</option>
           </select>
+        </div>
+
+        <div>
+          <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+            最大上下文Token数
+          </label>
+          <input
+            type='number'
+            min='1024'
+            step='1024'
+            value={maxContext}
+            onChange={(e) => setMaxContext(parseInt(e.target.value) || 131072)}
+            className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100'
+          />
+          <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+            上下文窗口 token 上限，默认 131072（128k）
+          </p>
+        </div>
+
+        <div>
+          <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+            上下文压缩触发阈值 (%)
+          </label>
+          <input
+            type='number'
+            min='0'
+            max='100'
+            step='1'
+            value={compressThreshold}
+            onChange={(e) => setCompressThreshold(parseInt(e.target.value) || 0)}
+            className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100'
+          />
+          <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+            超出后调用 LLM 将较早的工具调用摘要化并丢弃工具消息；0=关闭压缩
+          </p>
         </div>
 
         {(newProtocol === 'openai-completions' || newProtocol === 'openai-responses') && (

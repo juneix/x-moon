@@ -1139,6 +1139,8 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
     adminConfig.AIConfig.EnableNewMode = adminConfig.AIConfig.EnableNewMode ?? true;
     adminConfig.AIConfig.NewProtocol =
       adminConfig.AIConfig.NewProtocol ?? 'openai-completions';
+    adminConfig.AIConfig.MaxContext = adminConfig.AIConfig.MaxContext ?? 131072;
+    adminConfig.AIConfig.CompressThreshold = adminConfig.AIConfig.CompressThreshold ?? 90;
   }
 
   if (adminConfig.TelegramConfig) {

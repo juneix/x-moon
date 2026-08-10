@@ -58,6 +58,8 @@ export async function POST(request: NextRequest) {
       SerpApiKey,
       EnableNewMode,
       NewProtocol,
+      MaxContext,
+      CompressThreshold,
       EnableHomepageEntry,
       EnableVideoCardEntry,
       EnablePlayPageEntry,
@@ -97,6 +99,8 @@ export async function POST(request: NextRequest) {
       SerpApiKey?: string;
       EnableNewMode?: boolean;
       NewProtocol?: 'openai-completions' | 'openai-responses' | 'claude';
+      MaxContext?: number;
+      CompressThreshold?: number;
       EnableHomepageEntry: boolean;
       EnableVideoCardEntry: boolean;
       EnablePlayPageEntry: boolean;
@@ -140,6 +144,11 @@ export async function POST(request: NextRequest) {
       (EnableNewMode !== undefined && typeof EnableNewMode !== 'boolean') ||
       (NewProtocol !== undefined &&
         !['openai-completions', 'openai-responses', 'claude'].includes(NewProtocol)) ||
+      (MaxContext !== undefined && (typeof MaxContext !== 'number' || MaxContext <= 0)) ||
+      (CompressThreshold !== undefined &&
+        (typeof CompressThreshold !== 'number' ||
+          CompressThreshold < 0 ||
+          CompressThreshold > 100)) ||
       typeof EnableHomepageEntry !== 'boolean' ||
       typeof EnableVideoCardEntry !== 'boolean' ||
       typeof EnablePlayPageEntry !== 'boolean' ||
@@ -192,6 +201,8 @@ export async function POST(request: NextRequest) {
       SerpApiKey,
       EnableNewMode,
       NewProtocol,
+      MaxContext,
+      CompressThreshold,
       EnableHomepageEntry,
       EnableVideoCardEntry,
       EnablePlayPageEntry,

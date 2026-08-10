@@ -253,6 +253,8 @@ export interface AdminConfig {
     // 新版工具式调用配置
     EnableNewMode?: boolean; // 是否启用新版工具式调用（LLM 工具/function-calling），默认 true
     NewProtocol?: 'openai-completions' | 'openai-responses' | 'claude'; // 新版协议，默认 openai-completions
+    MaxContext?: number; // 最大上下文 token 数，默认 131072（128k）
+    CompressThreshold?: number; // 上下文压缩触发阈值百分比（0-100），默认 90；0=关闭
     // 功能开关
     EnableHomepageEntry: boolean; // 首页入口开关
     EnableVideoCardEntry: boolean; // VideoCard入口开关

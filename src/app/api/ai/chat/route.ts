@@ -314,6 +314,8 @@ async function handleNewMode(
     model,
     maxTokens: aiConfig.MaxTokens ?? 1000,
     temperature: aiConfig.Temperature ?? 0.7,
+    maxContext: aiConfig.MaxContext ?? 131072,
+    compressThreshold: aiConfig.CompressThreshold ?? 90,
     streaming: aiConfig.EnableStreaming !== false,
     systemPrompt,
     history,
@@ -333,7 +335,10 @@ async function handleNewMode(
     });
   }
 
-  return NextResponse.json({ content: result.content });
+  return NextResponse.json({
+    content: result.content,
+    ...(result.compressedSummary ? { compressedSummary: result.compressedSummary } : {}),
+  });
 }
 
 export async function POST(request: NextRequest) {
