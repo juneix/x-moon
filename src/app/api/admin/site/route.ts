@@ -52,6 +52,7 @@ export async function POST(request: NextRequest) {
       BangumiApiBaseUrl,
       BangumiImageBaseUrl,
       BangumiProxy,
+      LiveChartProxy,
       BannerDataSource,
       RecommendationDataSource,
       PansouApiUrl,
@@ -116,6 +117,7 @@ export async function POST(request: NextRequest) {
       BangumiApiBaseUrl?: string;
       BangumiImageBaseUrl?: string;
       BangumiProxy?: string;
+      LiveChartProxy?: string;
       BannerDataSource?: string;
       RecommendationDataSource?: string;
       PansouApiUrl?: string;
@@ -191,6 +193,7 @@ export async function POST(request: NextRequest) {
       (BangumiImageBaseUrl !== undefined &&
         typeof BangumiImageBaseUrl !== 'string') ||
       (BangumiProxy !== undefined && typeof BangumiProxy !== 'string') ||
+      (LiveChartProxy !== undefined && typeof LiveChartProxy !== 'string') ||
       (BannerDataSource !== undefined &&
         typeof BannerDataSource !== 'string') ||
       (RecommendationDataSource !== undefined &&
@@ -289,6 +292,7 @@ export async function POST(request: NextRequest) {
       BangumiApiBaseUrl: normalizeApiBaseUrl(BangumiApiBaseUrl),
       BangumiImageBaseUrl: normalizeApiBaseUrl(BangumiImageBaseUrl),
       BangumiProxy: normalizeApiBaseUrl(BangumiProxy),
+      LiveChartProxy: normalizeApiBaseUrl(LiveChartProxy),
       BannerDataSource,
       RecommendationDataSource,
       PansouApiUrl: normalizeApiBaseUrl(PansouApiUrl),

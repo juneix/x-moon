@@ -10,6 +10,12 @@ import {
   parseLiveChart,
 } from '@/lib/bangumi-schedule.server';
 import { getConfig } from '@/lib/config';
+import {
+  getBangumiScheduleDatabaseCache,
+  getBangumiScheduleMemoryCache,
+  setBangumiScheduleDatabaseCache,
+  setBangumiScheduleMemoryCache,
+} from '@/lib/bangumi-schedule-cache.server';
 
 export const dynamic = 'force-dynamic';
 
@@ -90,12 +96,29 @@ export async function GET() {
     const config = await getConfig();
     const { season, year } = currentSeason();
 
+    const memoryCached = getBangumiScheduleMemoryCache<ScheduleResponse>(season, year);
+    if (memoryCached) {
+      return NextResponse.json(memoryCached, {
+        headers: { 'Cache-Control': 'public, max-age=3600' },
+      });
+    }
+
+    const databaseCached = await getBangumiScheduleDatabaseCache<ScheduleResponse>(
+      season,
+      year
+    );
+    if (databaseCached) {
+      return NextResponse.json(databaseCached, {
+        headers: { 'Cache-Control': 'public, max-age=3600' },
+      });
+    }
+
     const [calendarRes, html] = await Promise.all([
       fetchBangumiFromServer('/calendar', {
         baseUrl: config.SiteConfig.BangumiApiBaseUrl,
         proxy: config.SiteConfig.BangumiProxy,
       }),
-      fetchLiveChart(season, year, config.SiteConfig.BangumiProxy),
+      fetchLiveChart(season, year, config.SiteConfig.LiveChartProxy),
     ]);
 
     if (!calendarRes.ok) {
@@ -112,33 +135,32 @@ export async function GET() {
     const flat = toFlatCalendarItems(calendar as RawCalendarWeek[]);
     const schedule = buildSchedule(flat, idx);
 
-    return NextResponse.json(
-      {
-        generatedAt: schedule.generatedAt,
-        season: schedule.season,
-        year: schedule.year,
-        days: schedule.days.map((d, wd) => ({
-          en: d.en,
-          cn: d.cn,
-          slots: d.slots.map((s) => ({
-            time: s.time,
-            items: s.items.map(toScheduleItem),
-          })),
-          // 该日未知放送时间（BGM 有星期但匹配不到精确时刻）。
-          // schedule.unknown 条目携带 BGM 星期（1=周一..7=周日），wd 为 0=周一..6=周日
-          unknown: schedule.unknown
-            .filter((u) => u.weekday === wd + 1)
-            .map(toScheduleItem),
+    const response: ScheduleResponse = {
+      generatedAt: schedule.generatedAt,
+      season: schedule.season,
+      year: schedule.year,
+      days: schedule.days.map((d, wd) => ({
+        en: d.en,
+        cn: d.cn,
+        slots: d.slots.map((s) => ({
+          time: s.time,
+          items: s.items.map(toScheduleItem),
         })),
-        unknown: schedule.unknown.map(toScheduleItem),
-      },
-      {
-        headers: {
-          'Cache-Control':
-            'public, max-age=1800, stale-while-revalidate=21600',
-        },
-      }
-    );
+        // 该日未知放送时间（BGM 有星期但匹配不到精确时刻）。
+        // schedule.unknown 条目携带 BGM 星期（1=周一..7=周日），wd 为 0=周一..6=周日
+        unknown: schedule.unknown
+          .filter((u) => u.weekday === wd + 1)
+          .map(toScheduleItem),
+      })),
+      unknown: schedule.unknown.map(toScheduleItem),
+    };
+
+    setBangumiScheduleMemoryCache(season, year, response);
+    await setBangumiScheduleDatabaseCache(season, year, response);
+
+    return NextResponse.json(response, {
+      headers: { 'Cache-Control': 'public, max-age=3600' },
+    });
   } catch (error) {
     console.error('获取 Bangumi 时刻表失败:', error);
     return NextResponse.json(
@@ -146,4 +168,18 @@ export async function GET() {
       { status: 500 }
     );
   }
+}
+
+
+interface ScheduleResponse {
+  generatedAt: number;
+  season: string;
+  year: number;
+  days: Array<{
+    en: string;
+    cn: string;
+    slots: Array<{ time: string; items: ScheduleItem[] }>;
+    unknown: ScheduleItem[];
+  }>;
+  unknown: ScheduleItem[];
 }

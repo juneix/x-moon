@@ -36,6 +36,7 @@ export interface AdminConfig {
     BangumiApiBaseUrl?: string;
     BangumiImageBaseUrl?: string;
     BangumiProxy?: string;
+    LiveChartProxy?: string;
     BannerDataSource?: string; // 轮播图数据源：TMDB、TX 或 Douban
     RecommendationDataSource?: string; // 更多推荐数据源：Douban、TMDB、Mixed、MixedSmart
     // Pansou配置

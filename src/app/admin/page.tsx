@@ -382,6 +382,7 @@ interface SiteConfig {
   BangumiApiBaseUrl?: string;
   BangumiImageBaseUrl?: string;
   BangumiProxy?: string;
+  LiveChartProxy?: string;
   BannerDataSource?: string;
   RecommendationDataSource?: string;
   PansouApiUrl?: string;
@@ -10549,6 +10550,7 @@ const SiteConfigComponent = ({
     BangumiApiBaseUrl: 'https://api.bgm.tv',
     BangumiImageBaseUrl: '',
     BangumiProxy: '',
+    LiveChartProxy: '',
     BannerDataSource: 'Douban',
     RecommendationDataSource: 'Mixed',
     PansouApiUrl: '',
@@ -10674,6 +10676,7 @@ const SiteConfigComponent = ({
           config.SiteConfig.BangumiApiBaseUrl || 'https://api.bgm.tv',
         BangumiImageBaseUrl: config.SiteConfig.BangumiImageBaseUrl || '',
         BangumiProxy: config.SiteConfig.BangumiProxy || '',
+        LiveChartProxy: config.SiteConfig.LiveChartProxy || '',
         BannerDataSource: config.SiteConfig.BannerDataSource || 'Douban',
         RecommendationDataSource:
           config.SiteConfig.RecommendationDataSource || 'Mixed',
@@ -11610,6 +11613,27 @@ const SiteConfigComponent = ({
             <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
               用于服务器代理访问 Bangumi API。Cloudflare
               部署环境下不会使用该代理。
+            </p>
+          </div>
+
+          <div>
+            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+              LiveChart 系统代理
+            </label>
+            <input
+              type='text'
+              placeholder='例如: http://127.0.0.1:7890'
+              value={siteSettings.LiveChartProxy || ''}
+              onChange={(e) =>
+                setSiteSettings((prev) => ({
+                  ...prev,
+                  LiveChartProxy: e.target.value,
+                }))
+              }
+              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
+            />
+            <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
+              用于服务器代理访问 LiveChart 番剧时刻表。留空则直连。
             </p>
           </div>
 

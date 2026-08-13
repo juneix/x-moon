@@ -308,6 +308,7 @@ async function getInitConfig(
         process.env.NEXT_PUBLIC_BANGUMI_IMAGE_BASE_URL ||
         '',
       BangumiProxy: process.env.BANGUMI_PROXY || '',
+      LiveChartProxy: process.env.LIVECHART_PROXY || '',
       // Pansou配置
       PansouApiUrl: '',
       PansouUsername: '',
@@ -562,6 +563,9 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
   }
   if (adminConfig.SiteConfig.DanmakuAutoLoadDefault === undefined) {
     adminConfig.SiteConfig.DanmakuAutoLoadDefault = true;
+  }
+  if (adminConfig.SiteConfig.LiveChartProxy === undefined) {
+    adminConfig.SiteConfig.LiveChartProxy = process.env.LIVECHART_PROXY || '';
   }
   // 确保评论开关存在
   if (adminConfig.SiteConfig.EnableComments === undefined) {
@@ -1059,6 +1063,7 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
     site.BangumiApiBaseUrl = normalizeApiBaseUrl(site.BangumiApiBaseUrl);
     site.BangumiImageBaseUrl = normalizeApiBaseUrl(site.BangumiImageBaseUrl);
     site.BangumiProxy = normalizeApiBaseUrl(site.BangumiProxy);
+    site.LiveChartProxy = normalizeApiBaseUrl(site.LiveChartProxy);
     site.PansouApiUrl = normalizeApiBaseUrl(site.PansouApiUrl);
     site.MagnetProxy = normalizeApiBaseUrl(site.MagnetProxy);
     site.MagnetMikanReverseProxy = normalizeApiBaseUrl(
