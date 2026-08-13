@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import * as cheerio from 'cheerio';
-import nodeFetch from 'node-fetch';
+import * as cheerio from 'cheerio/slim';
 import { HttpsProxyAgent } from 'https-proxy-agent';
+import nodeFetch from 'node-fetch';
 
 import { isCloudflareEnvironment } from '@/lib/bangumi.server';
 
