@@ -12,7 +12,7 @@ export const DEFAULT_BANGUMI_BASE_URL = 'https://api.bgm.tv';
 /** 桜色镜像站 API */
 export const BANGUMI_SAKURA_API_BASE_URL = 'https://api.bangumi.lol';
 
-function isCloudflareEnvironment(): boolean {
+export function isCloudflareEnvironment(): boolean {
   return (
     process.env.CF_PAGES === '1' || process.env.BUILD_TARGET === 'cloudflare'
   );

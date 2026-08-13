@@ -1,8 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import * as cheerio from 'cheerio';
-import fetch from 'node-fetch';
+import nodeFetch from 'node-fetch';
 import { HttpsProxyAgent } from 'https-proxy-agent';
+
+import { isCloudflareEnvironment } from '@/lib/bangumi.server';
 
 /**
  * Bangumi 番剧每日放送时刻表 —— 服务端实现。
@@ -68,7 +70,9 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * 抓取 LiveChart 当季全量页 HTML。
- * 带重试（3 次、线性退避）；使用 node-fetch，正常自动解压响应。
+ * 带重试（3 次、线性退避）。
+ * - Node 运行时：用 node-fetch，可带代理（HttpsProxyAgent）；
+ * - Cloudflare 运行时：node-fetch / https-proxy-agent 不可用，回退原生 fetch。
  */
 export async function fetchLiveChart(
   season: Season,
@@ -79,8 +83,23 @@ export async function fetchLiveChart(
   const attempts = 3;
   let lastError: unknown;
 
+  const useNativeFetch = isCloudflareEnvironment();
+
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
+      if (useNativeFetch) {
+        const res = await fetch(url, {
+          headers: {
+            'User-Agent': LIVE_CHART_UA,
+          },
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!res.ok) {
+          throw new Error(`LiveChart 请求失败: ${res.status}`);
+        }
+        return await res.text();
+      }
+
       const fetchOptions: any = {
         headers: {
           'User-Agent': LIVE_CHART_UA,
@@ -93,7 +112,7 @@ export async function fetchLiveChart(
           keepAlive: false,
         });
       }
-      const res = await fetch(url, fetchOptions);
+      const res = await nodeFetch(url, fetchOptions);
       if (!res.ok) {
         throw new Error(`LiveChart 请求失败: ${res.status}`);
       }
