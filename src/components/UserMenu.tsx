@@ -206,8 +206,10 @@ export const UserMenu: React.FC = () => {
   const [nextEpisodeDanmakuPreload, setNextEpisodeDanmakuPreload] =
     useState(true);
   const [disableAutoLoadDanmaku, setDisableAutoLoadDanmaku] = useState(false);
-  const [danmakuMaxCount, setDanmakuMaxCount] = useState(0);
+  const [danmakuMaxCount, setDanmakuMaxCount] = useState(5000);
   const [danmakuHeatmapDisabled, setDanmakuHeatmapDisabled] = useState(false);
+  const [danmakuTraditionalToSimplified, setDanmakuTraditionalToSimplified] =
+    useState(false);
   const [searchTraditionalToSimplified, setSearchTraditionalToSimplified] =
     useState(false);
   const [exactSearch, setExactSearch] = useState(true);
@@ -810,6 +812,16 @@ export const UserMenu: React.FC = () => {
         } catch (error) {
           console.error('解析首页模块配置失败:', error);
         }
+      }
+
+      // 加载弹幕繁简转换设置
+      const savedDanmakuTraditionalToSimplified = localStorage.getItem(
+        'danmakuTraditionalToSimplified'
+      );
+      if (savedDanmakuTraditionalToSimplified !== null) {
+        setDanmakuTraditionalToSimplified(
+          savedDanmakuTraditionalToSimplified === 'true'
+        );
       }
 
       // 加载搜索繁体转简体设置
@@ -1958,6 +1970,13 @@ export const UserMenu: React.FC = () => {
     }
   };
 
+  const handleDanmakuTraditionalToSimplifiedToggle = (value: boolean) => {
+    setDanmakuTraditionalToSimplified(value);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('danmakuTraditionalToSimplified', String(value));
+    }
+  };
+
   const handleSearchTraditionalToSimplifiedToggle = (value: boolean) => {
     setSearchTraditionalToSimplified(value);
     if (typeof window !== 'undefined') {
@@ -2111,6 +2130,7 @@ export const UserMenu: React.FC = () => {
     setHomeBannerHeightScale('1');
     setHomeContinueWatchingEnabled(true);
     setHomeModules(defaultHomeModules);
+    setDanmakuTraditionalToSimplified(false);
     setSearchTraditionalToSimplified(false);
 
     if (typeof window !== 'undefined') {
@@ -2141,12 +2161,13 @@ export const UserMenu: React.FC = () => {
         'disableAutoLoadDanmaku',
         String(!defaultDanmakuAutoLoad)
       );
-      localStorage.setItem('danmakuMaxCount', '0');
+      localStorage.setItem('danmakuMaxCount', '5000');
       localStorage.setItem('danmaku_heatmap_disabled', 'false');
       localStorage.setItem('homeBannerEnabled', 'true');
       localStorage.setItem('homeBannerHeightScale', '1');
       localStorage.setItem('homeContinueWatchingEnabled', 'true');
       localStorage.setItem('homeModules', JSON.stringify(defaultHomeModules));
+      localStorage.setItem('danmakuTraditionalToSimplified', 'false');
       localStorage.setItem('searchTraditionalToSimplified', 'false');
       window.dispatchEvent(new CustomEvent('homeModulesUpdated'));
     }
@@ -4024,6 +4045,34 @@ export const UserMenu: React.FC = () => {
                           checked={danmakuHeatmapDisabled}
                           onChange={(e) =>
                             handleDanmakuHeatmapDisabledToggle(e.target.checked)
+                          }
+                        />
+                        <div className='w-11 h-6 bg-gray-300 rounded-full peer-checked:bg-green-500 transition-colors dark:bg-gray-600'></div>
+                        <div className='absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform peer-checked:translate-x-5'></div>
+                      </div>
+                    </label>
+                  </div>
+
+                  {/* 弹幕繁简转换 */}
+                  <div className='flex items-center justify-between'>
+                    <div>
+                      <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
+                        弹幕繁简转换
+                      </h4>
+                      <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                        开启后，拉取弹幕时自动将繁体中文转换为简体中文
+                      </p>
+                    </div>
+                    <label className='flex items-center cursor-pointer'>
+                      <div className='relative'>
+                        <input
+                          type='checkbox'
+                          className='sr-only peer'
+                          checked={danmakuTraditionalToSimplified}
+                          onChange={(e) =>
+                            handleDanmakuTraditionalToSimplifiedToggle(
+                              e.target.checked
+                            )
                           }
                         />
                         <div className='w-11 h-6 bg-gray-300 rounded-full peer-checked:bg-green-500 transition-colors dark:bg-gray-600'></div>
