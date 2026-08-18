@@ -1,9 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import * as cheerio from 'cheerio/slim';
-import { HttpsProxyAgent } from 'https-proxy-agent';
-import nodeFetch from 'node-fetch';
-
+import { safeFetch } from './safe-http';
 import { isCloudflareEnvironment } from '@/lib/bangumi.server';
 
 /**
@@ -106,13 +104,7 @@ export async function fetchLiveChart(
         },
         signal: AbortSignal.timeout(proxy ? 30000 : 15000),
       };
-      if (proxy?.trim()) {
-        fetchOptions.agent = new HttpsProxyAgent(proxy.trim(), {
-          timeout: 30000,
-          keepAlive: false,
-        });
-      }
-      const res = await nodeFetch(url, fetchOptions);
+      const res = await safeFetch(url, fetchOptions, proxy);
       if (!res.ok) {
         throw new Error(`LiveChart 请求失败: ${res.status}`);
       }

@@ -576,9 +576,23 @@ export function processImageUrl(originalUrl: string): string {
   if (originalUrl.includes('image.tmdb.org')) {
     if (typeof window !== 'undefined') {
       const tmdbImageBaseUrl = getTmdbImageBaseUrl();
-      // 只有当用户设置了不同的 baseUrl 时才进行替换
+      // 与默认地址一致时无需替换
       if (tmdbImageBaseUrl !== 'https://image.tmdb.org') {
-        return originalUrl.replace('https://image.tmdb.org', tmdbImageBaseUrl);
+        // 已带有配置的图片前缀时直接返回，避免重复嵌套拼接
+        if (originalUrl.startsWith(tmdbImageBaseUrl)) {
+          return originalUrl;
+        }
+        // 仅替换开头的官方图片地址，避免对已拼接的 URL 再次追加前缀
+        for (const officialBase of [
+          'https://image.tmdb.org',
+          'http://image.tmdb.org',
+        ]) {
+          if (originalUrl.startsWith(officialBase)) {
+            return (
+              tmdbImageBaseUrl + originalUrl.slice(officialBase.length)
+            );
+          }
+        }
       }
     }
     return originalUrl;
