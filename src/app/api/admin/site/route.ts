@@ -48,6 +48,7 @@ export async function POST(request: NextRequest) {
       TMDBApiKey,
       TMDBProxy,
       TMDBReverseProxy,
+      TMDBImageBaseUrl,
       BangumiDataSource,
       BangumiApiBaseUrl,
       BangumiImageBaseUrl,
@@ -109,6 +110,7 @@ export async function POST(request: NextRequest) {
       TMDBApiKey?: string;
       TMDBProxy?: string;
       TMDBReverseProxy?: string;
+      TMDBImageBaseUrl?: string;
       BangumiDataSource?:
         | 'direct'
         | 'server-proxy'
@@ -183,6 +185,8 @@ export async function POST(request: NextRequest) {
       (TMDBProxy !== undefined && typeof TMDBProxy !== 'string') ||
       (TMDBReverseProxy !== undefined &&
         typeof TMDBReverseProxy !== 'string') ||
+      (TMDBImageBaseUrl !== undefined &&
+        typeof TMDBImageBaseUrl !== 'string') ||
       (BangumiDataSource !== undefined &&
         BangumiDataSource !== 'direct' &&
         BangumiDataSource !== 'server-proxy' &&
@@ -288,6 +292,7 @@ export async function POST(request: NextRequest) {
       TMDBApiKey,
       TMDBProxy: normalizeApiBaseUrl(TMDBProxy),
       TMDBReverseProxy: normalizeApiBaseUrl(TMDBReverseProxy),
+      TMDBImageBaseUrl: normalizeApiBaseUrl(TMDBImageBaseUrl),
       BangumiDataSource,
       BangumiApiBaseUrl: normalizeApiBaseUrl(BangumiApiBaseUrl),
       BangumiImageBaseUrl: normalizeApiBaseUrl(BangumiImageBaseUrl),

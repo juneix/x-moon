@@ -262,9 +262,12 @@ export const UserMenu: React.FC = () => {
   // 折叠面板状态
   const [isDoubanSectionOpen, setIsDoubanSectionOpen] = useState(false);
 
-  // TMDB 图片设置
+  // TMDB 图片设置（默认取站点配置的 TMDB 图片默认地址，用户可本地覆盖）
   const [tmdbImageBaseUrl, setTmdbImageBaseUrl] = useState(
-    'https://image.tmdb.org'
+    typeof window !== 'undefined'
+      ? ((window as any).RUNTIME_CONFIG?.TMDB_IMAGE_BASE_URL as string) ||
+        'https://image.tmdb.org'
+      : 'https://image.tmdb.org'
   );
   const [isUsageSectionOpen, setIsUsageSectionOpen] = useState(false);
   const [isDownloadSectionOpen, setIsDownloadSectionOpen] = useState(false);

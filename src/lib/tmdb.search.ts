@@ -4,6 +4,7 @@ import { HttpsProxyAgent } from 'https-proxy-agent';
 import nodeFetch from 'node-fetch';
 
 import { getNextApiKey } from './tmdb.client';
+import { getTmdbImageBaseUrl } from './tmdb-image-base';
 
 // TMDB API 默认 Base URL（不包含 /3/，由程序拼接）
 const DEFAULT_TMDB_BASE_URL = 'https://api.themoviedb.org';
@@ -237,8 +238,6 @@ export function getTMDBImageUrl(
     return path;
   }
 
-  const baseUrl = typeof window !== 'undefined'
-    ? localStorage.getItem('tmdbImageBaseUrl') || 'https://image.tmdb.org'
-    : 'https://image.tmdb.org';
+  const baseUrl = getTmdbImageBaseUrl();
   return `${baseUrl}/t/p/${size}${path}`;
 }

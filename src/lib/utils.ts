@@ -2,6 +2,8 @@
 import bs58 from 'bs58';
 import he from 'he';
 
+import { getTmdbImageBaseUrl } from './tmdb-image-base';
+
 export type DoubanImageProxyType =
   | 'direct'
   | 'server'
@@ -573,8 +575,7 @@ export function processImageUrl(originalUrl: string): string {
   // 处理 TMDB 图片 URL 替换
   if (originalUrl.includes('image.tmdb.org')) {
     if (typeof window !== 'undefined') {
-      const tmdbImageBaseUrl =
-        localStorage.getItem('tmdbImageBaseUrl') || 'https://image.tmdb.org';
+      const tmdbImageBaseUrl = getTmdbImageBaseUrl();
       // 只有当用户设置了不同的 baseUrl 时才进行替换
       if (tmdbImageBaseUrl !== 'https://image.tmdb.org') {
         return originalUrl.replace('https://image.tmdb.org', tmdbImageBaseUrl);

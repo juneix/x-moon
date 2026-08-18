@@ -374,6 +374,7 @@ interface SiteConfig {
   TMDBApiKey?: string;
   TMDBProxy?: string;
   TMDBReverseProxy?: string;
+  TMDBImageBaseUrl?: string;
   BangumiDataSource?:
     | 'direct'
     | 'server-proxy'
@@ -10546,6 +10547,7 @@ const SiteConfigComponent = ({
     TMDBApiKey: '',
     TMDBProxy: '',
     TMDBReverseProxy: '',
+    TMDBImageBaseUrl: 'https://image.tmdb.org',
     BangumiDataSource: 'direct',
     BangumiApiBaseUrl: 'https://api.bgm.tv',
     BangumiImageBaseUrl: '',
@@ -10671,6 +10673,8 @@ const SiteConfigComponent = ({
         TMDBApiKey: config.SiteConfig.TMDBApiKey || '',
         TMDBProxy: config.SiteConfig.TMDBProxy || '',
         TMDBReverseProxy: config.SiteConfig.TMDBReverseProxy || '',
+        TMDBImageBaseUrl:
+          config.SiteConfig.TMDBImageBaseUrl || 'https://image.tmdb.org',
         BangumiDataSource: config.SiteConfig.BangumiDataSource || 'direct',
         BangumiApiBaseUrl:
           config.SiteConfig.BangumiApiBaseUrl || 'https://api.bgm.tv',
@@ -11496,6 +11500,29 @@ const SiteConfigComponent = ({
             />
             <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
               配置 TMDB 反向代理 Base URL（可选）
+            </p>
+          </div>
+
+          {/* TMDB Image Base URL */}
+          <div>
+            <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+              TMDB 图片默认地址
+            </label>
+            <input
+              type='text'
+              placeholder='https://image.tmdb.org'
+              value={siteSettings.TMDBImageBaseUrl}
+              onChange={(e) =>
+                setSiteSettings((prev) => ({
+                  ...prev,
+                  TMDBImageBaseUrl: e.target.value,
+                }))
+              }
+              className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-green-500 focus:border-transparent'
+            />
+            <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
+              用户未在本地数据源设置中配置 TMDB 图片地址时，图片默认使用该地址（默认
+              https://image.tmdb.org）
             </p>
           </div>
         </div>
