@@ -40,6 +40,7 @@ import { createPortal } from 'react-dom';
 
 import { getAuthInfoFromBrowserCookie } from '@/lib/auth';
 import { clearAllDanmakuCache, getDanmakuCacheStats } from '@/lib/danmaku/api';
+import { SAVE_LIVE_PLAY_RECORDS_KEY } from '@/lib/db.client';
 import { clearBangumiImageFallbackCache } from '@/lib/utils';
 import { CURRENT_VERSION } from '@/lib/version';
 import { UpdateStatus } from '@/lib/version_check';
@@ -160,6 +161,7 @@ export const UserMenu: React.FC = () => {
 
   // 设置相关状态
   const [defaultAggregateSearch, setDefaultAggregateSearch] = useState(true);
+  const [saveLivePlayRecords, setSaveLivePlayRecords] = useState(false);
   const [doubanProxyUrl, setDoubanProxyUrl] = useState('');
   const [enableOptimization, setEnableOptimization] = useState(true);
   const [preferStrategy, setPreferStrategy] = useState<'fast' | 'full'>('fast');
@@ -608,6 +610,13 @@ export const UserMenu: React.FC = () => {
       );
       if (savedAggregateSearch !== null) {
         setDefaultAggregateSearch(JSON.parse(savedAggregateSearch));
+      }
+
+      const savedSaveLivePlayRecords = localStorage.getItem(
+        SAVE_LIVE_PLAY_RECORDS_KEY
+      );
+      if (savedSaveLivePlayRecords !== null) {
+        setSaveLivePlayRecords(savedSaveLivePlayRecords === 'true');
       }
 
       const savedDoubanDataSource = localStorage.getItem('doubanDataSource');
@@ -1638,6 +1647,13 @@ export const UserMenu: React.FC = () => {
     }
   };
 
+  const handleSaveLivePlayRecordsToggle = (value: boolean) => {
+    setSaveLivePlayRecords(value);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(SAVE_LIVE_PLAY_RECORDS_KEY, String(value));
+    }
+  };
+
   const handleDoubanProxyUrlChange = (value: string) => {
     setDoubanProxyUrl(value);
     if (typeof window !== 'undefined') {
@@ -2103,6 +2119,7 @@ export const UserMenu: React.FC = () => {
     const defaultAnimeImageBaseUrl = '';
 
     setDefaultAggregateSearch(true);
+    setSaveLivePlayRecords(false);
     setEnableOptimization(true);
     setPreferStrategy('fast');
     setFluidSearch(defaultFluidSearch);
@@ -2138,6 +2155,7 @@ export const UserMenu: React.FC = () => {
 
     if (typeof window !== 'undefined') {
       localStorage.setItem('defaultAggregateSearch', JSON.stringify(true));
+      localStorage.setItem(SAVE_LIVE_PLAY_RECORDS_KEY, 'false');
       localStorage.setItem('enableOptimization', JSON.stringify(true));
       localStorage.setItem('preferStrategy', 'fast');
       localStorage.setItem('fluidSearch', JSON.stringify(defaultFluidSearch));
@@ -3492,6 +3510,33 @@ export const UserMenu: React.FC = () => {
                       </div>
                     </label>
                   </div>
+
+                  {/* 直播播放记录 */}
+                  <div className='flex items-center justify-between'>
+                    <div>
+                      <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
+                        保存直播的播放记录
+                      </h4>
+                      <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                        开启后将保存直播频道观看记录
+                      </p>
+                    </div>
+                    <label className='flex items-center cursor-pointer'>
+                      <div className='relative'>
+                        <input
+                          type='checkbox'
+                          className='sr-only peer'
+                          checked={saveLivePlayRecords}
+                          onChange={(e) =>
+                            handleSaveLivePlayRecordsToggle(e.target.checked)
+                          }
+                        />
+                        <div className='w-11 h-6 bg-gray-300 rounded-full peer-checked:bg-green-500 transition-colors dark:bg-gray-600'></div>
+                        <div className='absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform peer-checked:translate-x-5'></div>
+                      </div>
+                    </label>
+                  </div>
+
                 </div>
               )}
             </div>
