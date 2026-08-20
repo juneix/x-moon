@@ -48,6 +48,7 @@ import SearchResultFilter, {
 import SearchSuggestions from '@/components/SearchSuggestions';
 import VideoCard, { VideoCardHandle } from '@/components/VideoCard';
 import VirtualScrollableGrid from '@/components/VirtualScrollableGrid';
+import { loadTraditionalToSimplifiedConverter } from '@/lib/danmaku/traditional-to-simplified';
 
 const PANSOU_CLOUD_TYPE_OPTIONS = Object.entries(CLOUD_TYPE_NAMES).map(
   ([value, label]) => ({ value, label })
@@ -1072,20 +1073,12 @@ function SearchPageClient() {
 
     // 初始化繁体转简体转换器
     if (typeof window !== 'undefined') {
-      import('opencc-js')
-        .then((module) => {
-          try {
-            const OpenCC = module.default || module;
-            const converter = OpenCC.Converter({ from: 'hk', to: 'cn' });
-            converterRef.current = converter;
-            setConverterReady(true);
-          } catch (error) {
-            console.error('初始化繁体转简体转换器失败:', error);
-            setConverterReady(true); // 即使失败也设置为 true，避免阻塞
-          }
+      loadTraditionalToSimplifiedConverter()
+        .then((converter) => {
+          converterRef.current = converter;
+          setConverterReady(true);
         })
-        .catch((error) => {
-          console.error('加载 opencc-js 失败:', error);
+        .catch(() => {
           setConverterReady(true); // 即使失败也设置为 true，避免阻塞
         });
     } else {

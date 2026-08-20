@@ -1,5 +1,4 @@
 // 弹幕 API 服务封装（通过本地代理转发）
-import { Converter } from 'opencc-js';
 import {
   clearAllDanmakuCache,
   clearDanmakuCache,
@@ -228,41 +227,8 @@ export async function getDanmakuByUrl(url: string): Promise<DanmakuComment[]> {
   }
 }
 
-let danmakuTraditionalToSimplifiedConverter: ((text: string) => string) | null = null;
-
-function getDanmakuTraditionalToSimplifiedConverter() {
-  if (danmakuTraditionalToSimplifiedConverter) {
-    return danmakuTraditionalToSimplifiedConverter;
-  }
-
-  try {
-    danmakuTraditionalToSimplifiedConverter = Converter({
-      from: 'hk',
-      to: 'cn',
-    });
-  } catch (error) {
-    console.error('初始化弹幕繁简转换器失败:', error);
-  }
-
-  return danmakuTraditionalToSimplifiedConverter;
-}
-
-function convertDanmakuText(text: string): string {
-  if (typeof window === 'undefined' ||
-      localStorage.getItem('danmakuTraditionalToSimplified') !== 'true') {
-    return text;
-  }
-
-  const converter = getDanmakuTraditionalToSimplifiedConverter();
-  if (!converter) return text;
-
-  try {
-    return converter(text);
-  } catch (error) {
-    console.error('弹幕繁简转换失败:', error);
-    return text;
-  }
-}
+// opencc-js 繁简转换逻辑已拆到独立客户端文件，避免服务端 bundle 内联其字典
+import { convertDanmakuText } from './traditional-to-simplified';
 
 // 将 danmu_api 的弹幕格式转换为 artplayer-plugin-danmuku 格式
 export function convertDanmakuFormat(
